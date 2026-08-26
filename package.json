@@ -1,0 +1,65 @@
+{
+  "name": "@skyporch/daykeeper-cli",
+  "version": "0.1.0",
+  "description": "Official machine-readable command-line client for Daykeeper",
+  "type": "module",
+  "bin": {
+    "daykeeper": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm pack:check",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "pack:check": "npm pack --dry-run --json",
+    "test": "tsx --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "prepublishOnly": "node scripts/verify-release.mjs",
+    "prepack": "pnpm run build"
+  },
+  "packageManager": "pnpm@10.8.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SkyPorch/daykeeper-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SkyPorch/daykeeper-cli/issues"
+  },
+  "homepage": "https://github.com/SkyPorch/daykeeper-cli#readme",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@skyporch/daykeeper": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "prettier": "3.9.6",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3"
+  },
+  "keywords": [
+    "daykeeper",
+    "customer-support",
+    "cli",
+    "automation"
+  ]
+}

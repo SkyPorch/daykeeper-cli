@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-dependency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      published: ${{ steps.sdk.outputs.published }}
+    steps:
+      - id: sdk
+        shell: bash
+        run: |
+          if npm view @skyporch/daykeeper@0.1.0 version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLI package checks await the reviewed @skyporch/daykeeper@0.1.0 bootstrap."
+          fi
+  package:
+    needs: sdk-dependency
+    if: needs.sdk-dependency.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
