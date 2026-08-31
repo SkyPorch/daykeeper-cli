@@ -1,0 +1,73 @@
+{
+  "name": "@skyporch/daykeeper-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Machine-readable command line for the Daykeeper management API",
+  "type": "module",
+  "sideEffects": false,
+  "bin": {
+    "daykeeper": "./dist/cli.js"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "COMMANDS.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/cli.ts --format esm,cjs --dts --sourcemap --target node20 --clean",
+    "check": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm smoke && pnpm pack:check",
+    "daykeeper": "node --import tsx src/cli.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --import tsx --test test/cli.test.ts test/release.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "smoke": "node scripts/smoke.mjs",
+    "pack:check": "node scripts/verify-package.mjs",
+    "prepublishOnly": "node scripts/verify-release.mjs",
+    "prepack": "pnpm run build"
+  },
+  "packageManager": "pnpm@10.8.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SkyPorch/daykeeper-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SkyPorch/daykeeper-cli/issues"
+  },
+  "homepage": "https://github.com/SkyPorch/daykeeper-cli#readme",
+  "dependencies": {
+    "@skyporch/daykeeper": "0.1.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "prettier": "3.9.6",
+    "tsup": "8.5.1",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.28.1"
+    }
+  }
+}
