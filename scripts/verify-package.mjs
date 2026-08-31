@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { verifyExecutable } from "./smoke.mjs";
@@ -35,6 +35,10 @@ try {
   const pack = result[0];
   assert.equal(basename(pack.filename), pack.filename);
   const files = pack.files.map((file) => file.path);
+  assert(
+    !files.includes("pnpm-lock.yaml"),
+    "The verification-only lockfile must not be shipped in the tarball",
+  );
   for (const required of [
     "package.json",
     "LICENSE",
@@ -61,9 +65,12 @@ try {
     directory,
   ]);
   const extracted = join(directory, "package");
+  // A frozen source install fills the package store without registry metadata.
+  // Reuse its reviewed lockfile for this offline check, not as package content.
+  await copyFile("pnpm-lock.yaml", join(extracted, "pnpm-lock.yaml"));
   execFileSync(
     "pnpm",
-    ["install", "--prod", "--offline", "--ignore-scripts", "--lockfile=false"],
+    ["install", "--prod", "--offline", "--frozen-lockfile", "--ignore-scripts"],
     { cwd: extracted, stdio: "pipe", timeout: 60000 },
   );
   const installed = JSON.parse(

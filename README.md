@@ -126,5 +126,7 @@ pnpm check
 Checks cover all 16 command mappings through the real published SDK, input and
 credential boundaries, denial/redaction behavior, deadlines and cancellation,
 the compiled executable against a synthetic loopback API, and an unpacked npm
-tarball with its pinned production dependencies installed offline. These checks
-do not certify a deployed server's tenant isolation or production availability.
+tarball with its pinned production dependencies installed offline using a
+verification-only copy of this repository's frozen lockfile. That lockfile is
+not shipped in the tarball. These checks do not certify a deployed server's
+tenant isolation or production availability.
