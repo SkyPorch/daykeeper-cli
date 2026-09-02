@@ -17,6 +17,11 @@ Before the first release, a maintainer must:
 5. Run `pnpm check`, inspect the exact tarball, and approve the immutable version.
 6. An npm owner publishes the first reviewed package interactively with the
    explicit release approval flag required by `scripts/verify-release.mjs`.
+7. Configure the package's npm trusted publisher for organization `SkyPorch`,
+   repository `daykeeper-cli`, workflow `release.yml`, environment
+   `daykeeper-npm-production`, and **stage publish only**.
+8. Set protected environment variable `DAYKEEPER_RELEASE_APPROVED` to `1` and
+   require a non-author reviewer.
 
 Do not publish, create release tags, or bypass the private flag as part of a
 normal implementation PR. CI builds and checks packages; it cannot publish them.
@@ -27,8 +32,14 @@ Follow semantic versioning. Record the exact public `@skyporch/daykeeper`
 dependency and compatibility evidence for every version; do not claim a newer
 SDK has been published because it exists on a branch.
 
-After bootstrap, a separately approved workflow can use the same protected
-`daykeeper-npm-production` environment and npm trusted-publishing/staging model
-as the Daykeeper SDKs. Configure a non-author reviewer, verify `vMAJOR.MINOR.PATCH`
-against the manifest, stage the artifact, and require npm-owner approval before
-promotion. No long-lived npm publishing token belongs in GitHub.
+After bootstrap, a matching GitHub Release enters the protected
+`daykeeper-npm-production` environment. The workflow checks out the exact tag,
+verifies `vMAJOR.MINOR.PATCH` against the manifest, runs the full package suite,
+and submits the artifact with `npm stage publish` through OIDC. A maintainer must
+download and review that staged artifact, then approve it with npm 2FA. The
+workflow cannot approve publication, and no long-lived npm token belongs in
+GitHub.
+
+CI also scans the complete candidate history with a checksum-pinned Gitleaks
+binary. A clean current checkout is not sufficient if an older commit contains
+a credential.
