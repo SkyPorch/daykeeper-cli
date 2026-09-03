@@ -36,3 +36,9 @@ untagged contract; see `RELEASING.md`.
   uncertain mutation outcomes without automatic retries.
 - Add command/auth/tenant-denial tests, executable loopback smoke, and isolated
   packed-package checks. Keep publication blocked pending bootstrap approval.
+- Extend `pack:check` to pack twice and compare the SHA-256 of every extracted
+  file, so an unreproducible package fails the build; to reject any test or
+  fixture path in the tarball; and to reject a shipped sourcemap whose `sources`
+  escape `dist` or use an absolute path.
+- Stop shipping `dist/**/*.map`. The generated maps reference `../src`, which is
+  not published, so they resolved to nothing on a consumer's machine.

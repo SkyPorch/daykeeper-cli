@@ -11,11 +11,11 @@ The CLI prints exactly one JSON envelope on stdout and never prompts.
 
 Two environment variables:
 
-| Variable | Purpose |
-| --- | --- |
-| `DAYKEEPER_API_URL` | Base URL of the Daykeeper management API. Required unless you pass `--base-url`. |
-| `DAYKEEPER_ACCESS_TOKEN` | Scoped access token. Required unless you pass `--token-stdin`. |
-| `DAYKEEPER_TIMEOUT_MS` | Optional. Combined input and request deadline, 1000–60000 ms. Defaults to 30000. |
+| Variable                 | Purpose                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `DAYKEEPER_API_URL`      | Base URL of the Daykeeper management API. Required unless you pass `--base-url`. |
+| `DAYKEEPER_ACCESS_TOKEN` | Scoped access token. Required unless you pass `--token-stdin`.                   |
+| `DAYKEEPER_TIMEOUT_MS`   | Optional. Combined input and request deadline, 1000–60000 ms. Defaults to 30000. |
 
 Set exactly one token source. Supplying both `DAYKEEPER_ACCESS_TOKEN` and
 `--token-stdin` is an error.
@@ -34,7 +34,12 @@ daykeeper tenants list
 Successful output is a single envelope:
 
 ```json
-{ "schemaVersion": "daykeeper.cli.v1", "ok": true, "command": "tenants list", "data": {} }
+{
+  "schemaVersion": "daykeeper.cli.v1",
+  "ok": true,
+  "command": "tenants list",
+  "data": {}
+}
 ```
 
 ## Keeping the token out of the environment

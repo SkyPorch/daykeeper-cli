@@ -7,9 +7,9 @@ the form `vMAJOR.MINOR.PATCH`, and every SDK or tool release must record the
 exact contract tag and the commit it resolved to. A branch head or an unmerged
 pull request head is never an acceptable record.
 
-| CLI version | Management contract | Customer contract | SDK dependency | Contract tag / commit |
-| --- | --- | --- | --- | --- |
-| 0.1.0 (unreleased) | 0.2.0 | not used | `@skyporch/daykeeper` 0.1.0 | none yet — 0.2.0 is pending in SkyPorch/daykeeper-openapi PR #15 and has no immutable tag |
+| CLI version        | Management contract | Customer contract | SDK dependency              | Contract tag / commit                                                                     |
+| ------------------ | ------------------- | ----------------- | --------------------------- | ----------------------------------------------------------------------------------------- |
+| 0.1.0 (unreleased) | 0.2.0               | not used          | `@skyporch/daykeeper` 0.1.0 | none yet — 0.2.0 is pending in SkyPorch/daykeeper-openapi PR #15 and has no immutable tag |
 
 Notes:
 
