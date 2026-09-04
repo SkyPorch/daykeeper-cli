@@ -3,23 +3,83 @@ name: Stage npm release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Rehearse the release. Runs everything up to and including
+          `npm publish --dry-run --provenance`; never publishes or stages.
+        type: boolean
+        required: false
+        default: true
+      ref:
+        description: Git ref to rehearse against. Defaults to the dispatch ref.
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   stage:
-    if: startsWith(github.event.release.tag_name, 'v')
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: daykeeper-npm-production
+    permissions:
+      contents: read
+      # Required for npm provenance via OIDC. No long-lived npm token is used.
+      id-token: write
     env:
       DAYKEEPER_RELEASE_APPROVED: ${{ vars.DAYKEEPER_RELEASE_APPROVED }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
     steps:
+      # A release can be published from any tag, including one pushed to an
+      # unreviewed branch or to no branch at all. Prove the tag is on main
+      # before any repository code is checked out or executed.
+      - name: Check out main for tag verification
+        if: github.event_name == 'release'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          # Credentials are kept only so the verification step below can fetch
+          # the tag ref; they are dropped again for the tag checkout.
+      - name: Verify the release tag is an ancestor of main
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          TARGET_COMMITISH: ${{ github.event.release.target_commitish }}
+        run: |
+          set -euo pipefail
+          if [ "${TARGET_COMMITISH}" != "main" ]; then
+            echo "::error::Release targets '${TARGET_COMMITISH}', not main." >&2
+            exit 1
+          fi
+          git fetch --no-tags --prune origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          git fetch --no-tags --force origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          tag_sha="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          echo "Tag ${RELEASE_TAG} -> ${tag_sha}"
+          echo "origin/main -> ${main_sha}"
+          if ! git merge-base --is-ancestor "${tag_sha}" refs/remotes/origin/main; then
+            echo "::error::Tag ${RELEASE_TAG} (${tag_sha}) is not an ancestor of origin/main; refusing to publish." >&2
+            exit 1
+          fi
+      - name: Refuse a workflow_dispatch that is not a dry run
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true
+        run: |
+          echo "::error::workflow_dispatch is a rehearsal path only. A real release must come from a published GitHub Release on a tag that is an ancestor of main." >&2
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || (inputs.ref != '' && inputs.ref || github.ref) }}
+          persist-credentials: false
       - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
         with:
           version: 10.8.0
@@ -32,5 +92,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: node scripts/verify-release.mjs
+        if: github.event_name == 'release'
+      - name: Rehearse publication without publishing
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish --dry-run --provenance --access public
       - name: Stage package for npm review
-        run: npm stage publish --access public --tag "${{ github.event.release.prerelease && 'next' || 'latest' }}"
+        if: github.event_name == 'release'
+        run: npm stage publish --access public --provenance --tag "${{ github.event.release.prerelease && 'next' || 'latest' }}"
