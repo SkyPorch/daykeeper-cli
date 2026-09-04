@@ -14,3 +14,6 @@ Run `pnpm check` before requesting review. Tests use synthetic credentials and
 loopback fixtures only. Do not use real tenant data or credentials as fixtures.
 The checks are client contract evidence, not a substitute for server isolation
 or deployed integration tests.
+
+Keep the repository publishable: examples, fixtures, and documentation must not
+name downstream products, consuming applications, or their hostnames.
