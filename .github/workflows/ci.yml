@@ -41,7 +41,9 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        node: [20, 22, 24]
+        # Keep PR feedback fast while retaining the full compatibility matrix
+        # on main pushes and manual runs.
+        node: ${{ github.event_name == 'pull_request' && fromJSON('[22]') || fromJSON('[20, 22, 24]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
