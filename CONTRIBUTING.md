@@ -1,12 +1,19 @@
 # Contributing
 
-Commands wrap `@skyporch/daykeeper`; they do not make independent HTTP calls.
-Add a typed SDK method first, then expose it as a command.
+Keep this CLI a consumer of released Daykeeper SDKs. Do not import private
+service code, install from a Git branch or local file, or bypass the SDK with
+unreviewed HTTP endpoints. Public API changes start in the versioned contract.
 
-Keep output machine-readable JSON on stdout and diagnostics on stderr. Never
-print or log API keys, tokens, request bodies, or provider response bodies.
+Add every command to the machine-readable catalog, COMMANDS.md, and the dispatch
+matrix tests. Test missing/unknown options, strict JSON validation, credential
+handling, redaction, server denials, and mutation retry behavior. A mutation must
+remain an explicit command and must preserve the caller's concurrency and
+idempotency identifiers.
 
-Examples, fixtures, and documentation must stay synthetic: no real tenant
-names, customer data, hostnames, or downstream product names.
+Run `pnpm check` before requesting review. Tests use synthetic credentials and
+loopback fixtures only. Do not use real tenant data or credentials as fixtures.
+The checks are client contract evidence, not a substitute for server isolation
+or deployed integration tests.
 
-Run the repository's checks before requesting review.
+Keep the repository publishable: examples, fixtures, and documentation must not
+name downstream products, consuming applications, or their hostnames.

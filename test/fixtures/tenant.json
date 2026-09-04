@@ -1,0 +1,9 @@
+{
+  "name": "Acme Support",
+  "slug": "acme-support",
+  "locale": "en-US",
+  "administrator": {
+    "name": "Support Lead",
+    "email": "support-lead@example.com"
+  }
+}
