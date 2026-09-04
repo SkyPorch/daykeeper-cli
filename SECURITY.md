@@ -12,9 +12,10 @@ Use GitHub's private vulnerability reporting on this repository: open the
 to you, contact the SkyPorch maintainers privately through your existing
 SkyPorch support channel. Do not open a public issue.
 
-## What to expect
+## Coordinated disclosure
 
-- Acknowledgement within 3 business days.
-- A status update at least every 7 days while the report is open.
-- Coordinated disclosure within 90 days of the report, or sooner once a fix
-  ships. Tell us if you intend to publish earlier so a fix can be prepared.
+Please give maintainers a chance to ship a fix before publishing details, and
+tell us when you intend to publish so a fix and an advisory can be prepared
+alongside it. Reporters who want credit in the advisory should say so in the
+report. No acknowledgement time, status-update cadence, or disclosure deadline
+is promised: this project is unreleased and no security response is staffed yet.
