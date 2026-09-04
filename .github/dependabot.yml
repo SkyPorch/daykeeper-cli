@@ -4,7 +4,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      npm-production-routine:
+        dependency-type: production
+        update-types: [minor, patch]
+      npm-development-routine:
+        dependency-type: development
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      github-actions-routine:
+        update-types: [minor, patch]
