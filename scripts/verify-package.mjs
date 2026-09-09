@@ -9,7 +9,7 @@ import { verifyExecutable } from "./smoke.mjs";
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
 assert.equal(manifest.name, "@skyporch/daykeeper-cli");
 assert.equal(manifest.license, "Apache-2.0");
-assert.equal(manifest.dependencies["@skyporch/daykeeper"], "0.1.0");
+assert.equal(manifest.dependencies["@skyporch/daykeeper"], "0.2.0");
 for (const group of [
   manifest.dependencies,
   manifest.optionalDependencies,
@@ -186,7 +186,7 @@ try {
     ),
   );
   assert.equal(installed.name, "@skyporch/daykeeper");
-  assert.equal(installed.version, "0.1.0");
+  assert.equal(installed.version, "0.2.0");
   await verifyExecutable(resolve(packA.root, manifest.bin.daykeeper));
   console.log(
     `PASS packed CLI: ${pack.filename}; ${files.length} allowlisted files; ` +

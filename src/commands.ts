@@ -27,6 +27,29 @@ interface Command {
 
 const commands: readonly Command[] = [
   {
+    name: "init",
+    effect: "mutation",
+    summary:
+      "Enroll a machine owner, create one Free workspace with an API inbox, and store the credential.",
+    required: ["name"],
+    optional: [
+      "plan",
+      "origin",
+      "onboarding-url",
+      "base-url",
+      "gateway-url",
+      "slug",
+      "locale",
+      "home",
+      "wait-ms",
+      "reveal-key",
+      "json",
+    ],
+    // The credential this command mints carries its own fixed scopes. The
+    // command itself runs without a pre-existing access token.
+    scopes: [],
+  },
+  {
     name: "capabilities",
     effect: "read",
     summary: "Inspect server capabilities and execution gates.",
@@ -117,7 +140,7 @@ const commands: readonly Command[] = [
     name: "flows create",
     effect: "mutation",
     summary: "Create a draft flow; do not publish or execute it.",
-    required: ["tenant-id", "input"],
+    required: ["tenant-id", "input", "idempotency-key"],
     scopes: ["daykeeper.flows:write"],
     input: "flow",
   },
@@ -133,7 +156,7 @@ const commands: readonly Command[] = [
     effect: "mutation",
     summary:
       "Create a revision using the expected latest version in JSON input.",
-    required: ["flow-id", "input"],
+    required: ["flow-id", "input", "idempotency-key"],
     scopes: ["daykeeper.flows:write"],
     input: "flowVersion",
   },
@@ -142,7 +165,12 @@ const commands: readonly Command[] = [
     effect: "mutation",
     summary:
       "Publish an existing revision using an explicit expected resource version.",
-    required: ["flow-id", "version", "expected-resource-version"],
+    required: [
+      "flow-id",
+      "version",
+      "expected-resource-version",
+      "idempotency-key",
+    ],
     scopes: ["daykeeper.flows:publish"],
   },
 ];
@@ -167,8 +195,17 @@ const stringOptions = [
   "version",
   "expected-resource-version",
   "input",
+  "name",
+  "plan",
+  "origin",
+  "onboarding-url",
+  "gateway-url",
+  "slug",
+  "locale",
+  "home",
+  "wait-ms",
 ];
-const booleanOptions = ["token-stdin", "json", "help"];
+const booleanOptions = ["token-stdin", "json", "help", "reveal-key"];
 
 export interface ParsedCommand {
   command?: Command;
@@ -254,6 +291,13 @@ export function parseCommand(args: readonly string[]): ParsedCommand {
       missing,
     );
   }
+  if (command.name === "init" && options["token-stdin"]) {
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "init creates its own credential and must not run under another access token.",
+      ["token-stdin"],
+    );
+  }
   if (options["token-stdin"] && options.input === "-") {
     throw new CliError(
       "STDIN_CONFLICT",
@@ -320,7 +364,13 @@ export async function dispatch(
     case "flows get":
       return client.flows.get(option("flow-id"));
     case "flows create":
-      return client.flows.create(option("tenant-id"), input as CreateFlowInput);
+      return client.flows.create(
+        option("tenant-id"),
+        input as CreateFlowInput,
+        {
+          idempotencyKey: option("idempotency-key"),
+        },
+      );
     case "flows versions get":
       return client.flows.getVersion(
         option("flow-id"),
@@ -330,6 +380,7 @@ export async function dispatch(
       return client.flows.createVersion(
         option("flow-id"),
         input as CreateFlowVersionInput,
+        { idempotencyKey: option("idempotency-key") },
       );
     case "flows versions publish":
       return client.flows.publishVersion(
@@ -341,6 +392,7 @@ export async function dispatch(
             "expected-resource-version",
           ),
         },
+        { idempotencyKey: option("idempotency-key") },
       );
     default:
       throw new CliError(

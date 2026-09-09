@@ -1,32 +1,34 @@
 # Daykeeper CLI command contract
 
 Envelope version: `daykeeper.cli.v1`. CLI foundation: `0.1.0`. Runtime management
-SDK: the published `@skyporch/daykeeper@0.1.0`.
+SDK: the published `@skyporch/daykeeper@0.2.0`.
 
 ## Commands
 
-Every network command requires an explicit API base URL and one scoped access
-token. Each invocation calls exactly one SDK method. Scope names below are
-required by the API, not permissions granted by a CLI option.
+`init` is described in its own section below: it is the one command that makes
+several SDK calls and the one command that persists state. Every other network
+command requires an explicit API base URL and one scoped access token, and calls
+exactly one SDK method. Scope names below are required by the API, not
+permissions granted by a CLI option.
 
-| Command                  | Required flags                                          | Optional flags | API scope                      | Effect                                        |
-| ------------------------ | ------------------------------------------------------- | -------------- | ------------------------------ | --------------------------------------------- |
-| `capabilities`           | —                                                       | —              | `daykeeper.accounts:read`      | Read server capabilities                      |
-| `tenants list`           | —                                                       | —              | `daykeeper.accounts:read`      | Read visible tenants                          |
-| `tenants get`            | `--tenant-id`                                           | —              | `daykeeper.accounts:read`      | Read one tenant                               |
-| `tenants plan`           | `--input`                                               | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
-| `tenants apply`          | `--plan-id`, `--plan-version`, `--idempotency-key`      | —              | `daykeeper.provisioning:apply` | Apply the exact tenant plan                   |
-| `email-channels get`     | `--tenant-id`                                           | —              | `daykeeper.accounts:read`      | Read channel and DNS status                   |
-| `email-channels plan`    | `--tenant-id`, `--input`                                | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
-| `email-channels apply`   | `--plan-id`, `--plan-version`, `--idempotency-key`      | —              | `daykeeper.provisioning:apply` | Apply the exact channel plan                  |
-| `operations get`         | `--operation-id`                                        | —              | `daykeeper.provisioning:read`  | Read operation state                          |
-| `operations retry`       | `--operation-id`                                        | —              | `daykeeper.provisioning:apply` | Request one retry explicitly                  |
-| `flows list`             | —                                                       | `--tenant-id`  | `daykeeper.flows:read`         | Read visible flows                            |
-| `flows get`              | `--flow-id`                                             | —              | `daykeeper.flows:read`         | Read flow and latest version                  |
-| `flows create`           | `--tenant-id`, `--input`                                | —              | `daykeeper.flows:write`        | Create a draft, not a publication             |
-| `flows versions get`     | `--flow-id`, `--version`                                | —              | `daykeeper.flows:read`         | Read exact immutable revision                 |
-| `flows versions create`  | `--flow-id`, `--input`                                  | —              | `daykeeper.flows:write`        | Create a revision with optimistic concurrency |
-| `flows versions publish` | `--flow-id`, `--version`, `--expected-resource-version` | —              | `daykeeper.flows:publish`      | Publish an existing revision                  |
+| Command                  | Required flags                                                               | Optional flags | API scope                      | Effect                                        |
+| ------------------------ | ---------------------------------------------------------------------------- | -------------- | ------------------------------ | --------------------------------------------- |
+| `capabilities`           | —                                                                            | —              | `daykeeper.accounts:read`      | Read server capabilities                      |
+| `tenants list`           | —                                                                            | —              | `daykeeper.accounts:read`      | Read visible tenants                          |
+| `tenants get`            | `--tenant-id`                                                                | —              | `daykeeper.accounts:read`      | Read one tenant                               |
+| `tenants plan`           | `--input`                                                                    | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
+| `tenants apply`          | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —              | `daykeeper.provisioning:apply` | Apply the exact tenant plan                   |
+| `email-channels get`     | `--tenant-id`                                                                | —              | `daykeeper.accounts:read`      | Read channel and DNS status                   |
+| `email-channels plan`    | `--tenant-id`, `--input`                                                     | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
+| `email-channels apply`   | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —              | `daykeeper.provisioning:apply` | Apply the exact channel plan                  |
+| `operations get`         | `--operation-id`                                                             | —              | `daykeeper.provisioning:read`  | Read operation state                          |
+| `operations retry`       | `--operation-id`                                                             | —              | `daykeeper.provisioning:apply` | Request one retry explicitly                  |
+| `flows list`             | —                                                                            | `--tenant-id`  | `daykeeper.flows:read`         | Read visible flows                            |
+| `flows get`              | `--flow-id`                                                                  | —              | `daykeeper.flows:read`         | Read flow and latest version                  |
+| `flows create`           | `--tenant-id`, `--input`, `--idempotency-key`                                | —              | `daykeeper.flows:write`        | Create a draft, not a publication             |
+| `flows versions get`     | `--flow-id`, `--version`                                                     | —              | `daykeeper.flows:read`         | Read exact immutable revision                 |
+| `flows versions create`  | `--flow-id`, `--input`, `--idempotency-key`                                  | —              | `daykeeper.flows:write`        | Create a revision with optimistic concurrency |
+| `flows versions publish` | `--flow-id`, `--version`, `--expected-resource-version`, `--idempotency-key` | —              | `daykeeper.flows:publish`      | Publish an existing revision                  |
 
 Identifiers must be UUIDs. Version flags must be positive safe integers.
 Idempotency keys must contain 16–128 ASCII letters, digits, periods, underscores,
@@ -37,9 +39,180 @@ catalog, or a single command's catalog when supplied with its command name.
 
 Global options are `--base-url`, `--timeout-ms`, `--token-stdin`, `--json`, and
 `--help`. `DAYKEEPER_API_URL`, `DAYKEEPER_ACCESS_TOKEN`, and
-`DAYKEEPER_TIMEOUT_MS` are the only configuration environment variables read by
-the CLI. Explicit base URL and timeout flags override their environment values.
-There are no config files, saved profiles, token arguments, or interactive prompts.
+`DAYKEEPER_TIMEOUT_MS` are the configuration environment variables every command
+reads; `init` additionally reads `DAYKEEPER_ORIGIN`, `DAYKEEPER_ONBOARDING_URL`,
+`DAYKEEPER_GATEWAY_URL`, `DAYKEEPER_HOME`, and `XDG_CONFIG_HOME`. Explicit flags
+override their environment values. Apart from the files `init` writes under its
+own home, there are no config files, saved profiles, token arguments, or
+interactive prompts.
+
+## `init`
+
+`init` is the only command that persists state and the only command that makes
+more than one SDK call. It enrolls a machine owner, stores the credential
+locally, creates one Free workspace with an API inbox, waits for provisioning,
+activates the inbox, and prints the identifiers with ready-to-paste SDK and MCP
+configuration. Run it again and it resumes from wherever it stopped; it never
+creates a second workspace, credential, or inbox.
+
+```sh
+daykeeper init --name "Acme Support" --plan free --json
+```
+
+| Flag                                              | Required | Meaning                                                                                                 |
+| ------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `--name <text>`                                   | yes      | Workspace and inbox name, 2–120 characters after trimming.                                              |
+| `--plan free`                                     | no       | Only `free` is accepted. The value is validated, never sent.                                            |
+| `--origin <https url>`                            | no       | HTTPS origin serving onboarding and the management API. Env `DAYKEEPER_ORIGIN`.                         |
+| `--onboarding-url`, `--base-url`, `--gateway-url` | no       | Per-service overrides. Env `DAYKEEPER_ONBOARDING_URL`, `DAYKEEPER_API_URL`, `DAYKEEPER_GATEWAY_URL`.    |
+| `--slug <slug>`                                   | no       | Inbox slug. Default: the slugified name, truncated to 63, falling back to `inbox`.                      |
+| `--locale <tag>`                                  | no       | Default `en`.                                                                                           |
+| `--home <dir>`                                    | no       | Where state lives. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`. |
+| `--wait-ms <n>`                                   | no       | Budget for provisioning polling and rate-limit sleeps, 10000–900000. Default 300000.                    |
+| `--reveal-key`                                    | no       | Print the literal credential in the JSON output. Off by default.                                        |
+
+`--timeout-ms` applies per request; `--wait-ms` bounds provisioning polling and
+rate-limit sleeps only, not the run's total duration and not any single request.
+`--token-stdin` and `DAYKEEPER_ACCESS_TOKEN` are rejected with
+`INVALID_ARGUMENT`: `init` creates its own credential and must not run under
+someone else's. There is no built-in default hostname in this repository, so
+`init` fails with `ORIGIN_REQUIRED` until an origin is configured.
+
+### State
+
+`<home>/credentials.json`, directory mode `0700`, file mode `0600`, written
+through a temporary file and a rename. A state file that any other account can
+read is refused with `STATE_INSECURE` rather than used. The file holds the
+machine owner private key, the enrollment intent and its idempotency key, the
+workspace and credential identifiers, the reveal-once credential, and the
+inbox's slug attempt counter, recorded plan, apply key, operation id,
+provisioning timestamp, and activation intent. The private key is never
+transmitted and cannot be recovered if the file is lost, which the file's own
+`warning` field states.
+
+A home directory `init` creates is set to `0700`. A `--home` that already exists
+is inspected, never re-permissioned: any group or world bit fails with
+`STATE_INSECURE`. The state file is opened with `O_NOFOLLOW` where the platform
+provides it, so a symlinked path is refused, and a state file whose directory
+another account can write to is refused as well.
+
+The state file also records the origins its credential was minted against. If a
+later run resolves a different `--origin`, `--onboarding-url`, `--base-url`, or
+`--gateway-url`, it fails with `STATE_ORIGIN_MISMATCH` before any request is
+sent, so a stored credential is never offered to a host that did not issue it.
+The error names the differing flags and the two hostnames, never the configured
+URLs, and it is not resumable: use a separate `--home` per origin.
+
+`<home>/mcp.json` is written at mode `0600` and is the one place besides the
+state file that carries the literal credential, because MCP clients read
+configuration files rather than stdin.
+
+### Steps and resume
+
+Each step persists its result before the next request is sent. `steps` lists
+what ran in this invocation, and `resumed` is true when any step was skipped
+because the state file already had its result:
+
+`owner_key`, `enroll`, `recover`, `inbox_adopt`, `inbox_apply`, `inbox_wait`,
+`inbox_activate`.
+
+Mutations are sent exactly once per stored intent. A rerun reuses the stored
+enrollment idempotency key, tenant apply key, rotation intent, and activation
+intent verbatim, so the server replays the stored result instead of applying a
+second change. A replayed enrollment never re-reveals its credential, so a run
+that finds a claimed workspace with no stored token rotates instead; a
+credential inside its last 24 hours rotates the same way. A slug conflict from
+the plan call appends `-2`, `-3`, and the attempt counter is stored so a crash
+mid-conflict resumes at the next unused suffix; the accepted plan is stored
+before the apply is sent, so an apply that fails propagates and the rerun
+replays the same key against the same plan instead of creating a second one. A
+`TENANT_QUOTA_EXCEEDED` is surfaced and never retried.
+
+Provisioning is polled every 3 seconds inside `--wait-ms`, and a `429` is
+honored for its `Retry-After` without ever exceeding that budget. A `429` on a
+challenge-bound mutation is never resent with the same proof: the run waits, then
+requests a new challenge and signs again, and refuses with a resumable
+`RATE_LIMITED` when the delay would outlast the remaining budget. Management-API
+`429`s use a fixed 3-second delay and are retried at most twice, because the
+published SDK does not project `Retry-After` on `DaykeeperApiError`; once it
+does, that delay follows the header like the onboarding ones.
+
+### Output
+
+```json
+{
+  "workspace": {
+    "organizationId": "…",
+    "slug": "…",
+    "name": "Acme Support",
+    "plan": "free"
+  },
+  "inbox": {
+    "tenantId": "…",
+    "slug": "acme-support",
+    "name": "Acme Support",
+    "state": "prepared",
+    "trafficEnabled": true
+  },
+  "credential": {
+    "id": "…",
+    "expiresAt": "…",
+    "storedAt": "/home/agent/.config/daykeeper/credentials.json"
+  },
+  "endpoints": { "apiUrl": "https://…", "gatewayUrl": "https://…" },
+  "sdk": {
+    "packages": {
+      "backend": "@skyporch/daykeeper@0.2.0",
+      "reactNative": "@skyporch/daykeeper-react-native@0.1.0"
+    },
+    "env": {
+      "DAYKEEPER_API_URL": "https://…",
+      "DAYKEEPER_API_KEY": "<stored; rerun with --reveal-key>"
+    }
+  },
+  "mcp": {
+    "configPath": "/home/agent/.config/daykeeper/mcp.json",
+    "mcpServers": {
+      "daykeeper": {
+        "command": "npx",
+        "args": ["--yes", "@skyporch/daykeeper-mcp@0.2.0"],
+        "env": {
+          "DAYKEEPER_API_URL": "https://…",
+          "DAYKEEPER_API_KEY": "<stored; see configPath>",
+          "DAYKEEPER_MCP_ENABLE_PLANNING": "true",
+          "DAYKEEPER_MCP_ENABLE_MUTATIONS": "true",
+          "DAYKEEPER_MCP_ENABLE_INBOX_TOOLS": "true",
+          "DAYKEEPER_MCP_ENABLE_ACTIVATION_TOOLS": "true",
+          "DAYKEEPER_MCP_ENABLE_OPERATOR_TOOLS": "true"
+        }
+      }
+    }
+  },
+  "resumed": false,
+  "steps": [
+    "owner_key",
+    "enroll",
+    "inbox_apply",
+    "inbox_wait",
+    "inbox_activate"
+  ]
+}
+```
+
+The credential is redacted from output unless `--reveal-key` is supplied, and
+the machine owner private key is redacted unconditionally. `mcp.json` on disk
+carries the literal credential either way. With `--reveal-key`, both
+`DAYKEEPER_API_KEY` values above are the literal credential.
+
+### Errors
+
+`init` adds `ORIGIN_REQUIRED`, `STATE_UNREADABLE`, `STATE_INSECURE`,
+`STATE_ORIGIN_MISMATCH`, `RATE_LIMITED`, `PROVISIONING_FAILED`,
+`PROVISIONING_TIMEOUT`, `ACTIVATION_UNAVAILABLE`, and
+`CREDENTIAL_UNRECOVERABLE`. Every error reports the step it reached in `fields`
+and carries `nextActions: ["run_init_again"]` whenever a rerun can resume.
+`PROVISIONING_FAILED` also carries the `operationId` and next action
+`operations_retry`; `init` never retries an operation on its own.
 
 ## JSON input
 
@@ -157,8 +330,8 @@ its result was lost to transport failure, timeout, cancellation, or a server-sid
 work, and does not establish that a mutation is safe to repeat.
 
 `retryable` describes the reported failure, not permission to repeat a mutation.
-No command retries automatically, including on `401`, `429`, or `5xx`. The
-published SDK does not expose `Retry-After` through its error object; this CLI
-does not invent a retry delay. Use plan/apply idempotency or inspect resource
+No command other than `init` retries automatically, including on `401`, `429`, or
+`5xx`. The published management SDK does not expose `Retry-After` through its
+error object; this CLI does not invent a retry delay outside `init`. Use plan/apply idempotency or inspect resource
 state before explicitly trying again. For automation, rely on `code`, `status`,
 and `nextActions`, not human-readable message text.

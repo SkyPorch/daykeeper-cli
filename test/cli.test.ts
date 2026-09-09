@@ -112,7 +112,7 @@ test("help and version are deterministic JSON and never read credentials or stdi
   assert.equal(first.exitCode, 0);
   assert.equal(first.requests.length, 0);
   assert.equal(reads, 0);
-  assert.equal(first.envelope.data.commands.length, 16);
+  assert.equal(first.envelope.data.commands.length, 17);
   const version = await invoke(["--version"], { env: {} });
   assert.deepEqual(version.envelope.data, {
     name: "@skyporch/daykeeper-cli",
@@ -205,10 +205,11 @@ const cases = [
   },
   {
     command: "flows create",
-    flags: ["--tenant-id", TENANT, "--input", "-"],
+    flags: ["--tenant-id", TENANT, "--input", "-", "--idempotency-key", KEY],
     method: "POST",
     path: `/v1/tenants/${TENANT}/flows`,
     input: flow,
+    key: KEY,
   },
   {
     command: "flows versions get",
@@ -218,10 +219,11 @@ const cases = [
   },
   {
     command: "flows versions create",
-    flags: ["--flow-id", FLOW, "--input", "-"],
+    flags: ["--flow-id", FLOW, "--input", "-", "--idempotency-key", KEY],
     method: "POST",
     path: `/v1/flows/${FLOW}/versions`,
     input: flowVersion,
+    key: KEY,
   },
   {
     command: "flows versions publish",
@@ -232,10 +234,13 @@ const cases = [
       "2",
       "--expected-resource-version",
       "7",
+      "--idempotency-key",
+      KEY,
     ],
     method: "POST",
     path: `/v1/flows/${FLOW}/versions/2/publish`,
     body: { expectedResourceVersion: 7 },
+    key: KEY,
   },
 ];
 
@@ -277,7 +282,9 @@ test("the command catalog and tested SDK dispatch matrix remain identical", () =
     commandCatalog()
       .map((command) => command.name)
       .sort(),
-    cases.map((fixture) => fixture.command).sort(),
+    // `init` is the one command that is not a single SDK call; its whole
+    // contract is exercised in test/init.test.ts.
+    [...cases.map((fixture) => fixture.command), "init"].sort(),
   );
 });
 
@@ -377,6 +384,8 @@ const invalidArguments = [
     `${KEY}\ninjected`,
   ],
   ["flows", "versions", "publish", "--flow-id", FLOW, "--version", "1"],
+  ["flows", "create", "--tenant-id", TENANT, "--input", "-"],
+  ["flows", "versions", "create", "--flow-id", FLOW, "--input", "-"],
   ["flows", "versions", "get", "--flow-id", FLOW, "--version", "1.5"],
   ["capabilities", "--timeout-ms", "999"],
   ["capabilities", "--timeout-ms", "60001"],
@@ -445,7 +454,16 @@ test("strict input schemas reject organization overrides and unknown action capa
     [],
   ]) {
     const result = await invoke(
-      ["flows", "create", "--tenant-id", TENANT, "--input", "-"],
+      [
+        "flows",
+        "create",
+        "--tenant-id",
+        TENANT,
+        "--input",
+        "-",
+        "--idempotency-key",
+        KEY,
+      ],
       {
         input: JSON.stringify({
           ...flow,
@@ -835,7 +853,7 @@ test("manifest pins the inspected public SDK without private or local dependenci
   );
   assert.equal(manifest.version, CLI_VERSION);
   assert.equal(manifest.dependencies["@skyporch/daykeeper"], SDK_VERSION);
-  assert.equal(SDK_VERSION, "0.1.0");
+  assert.equal(SDK_VERSION, "0.2.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(
     manifest.private,

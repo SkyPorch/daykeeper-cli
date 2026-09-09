@@ -9,10 +9,26 @@ export class CliError extends Error {
     message: string,
     readonly fields: readonly string[] = [],
     readonly retryable = false,
+    readonly nextActions: readonly string[] = [],
+    /** Bounded, non-secret identifiers the caller needs to act on the failure. */
+    readonly details: Readonly<Record<string, string>> = {},
   ) {
     super(message);
     this.name = "DaykeeperCliError";
   }
+}
+
+/**
+ * The SDK reports whether a dispatched mutation's outcome is unknown. `init`
+ * uses that signal directly, because one invocation sends both reads and
+ * mutations and only the SDK knows which one failed.
+ */
+export function reportedOutcomeUnknown(error: unknown): boolean {
+  return (
+    (error instanceof DaykeeperApiError ||
+      error instanceof DaykeeperTransportError) &&
+    error.outcomeUnknown === true
+  );
 }
 
 export function errorEnvelope(error: unknown, secrets: readonly string[]) {
@@ -23,7 +39,8 @@ export function errorEnvelope(error: unknown, secrets: readonly string[]) {
       message: error.message,
       retryable: error.retryable,
       fields: error.fields,
-      nextActions: [],
+      nextActions: error.nextActions,
+      ...safeDetails(error.details, secrets),
     };
   }
   if (error instanceof DaykeeperApiError) {
@@ -68,6 +85,18 @@ export function errorEnvelope(error: unknown, secrets: readonly string[]) {
     fields: [],
     nextActions: [],
   };
+}
+
+function safeDetails(
+  details: Readonly<Record<string, string>>,
+  secrets: readonly string[],
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(details).flatMap(([key, value]) => {
+      const safe = safeValue(value, /^[A-Za-z0-9._:-]{1,128}$/, secrets);
+      return safe === undefined ? [] : [[key, safe]];
+    }),
+  );
 }
 
 function safeValue(

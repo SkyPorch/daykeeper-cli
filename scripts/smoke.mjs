@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:http";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
@@ -48,14 +50,50 @@ async function call(bin, args, environment = {}) {
 export async function verifyExecutable(bin) {
   const help = await call(bin, ["--help"]);
   assert.equal(help.exitCode, 0);
-  assert.equal(help.envelope.data.commands.length, 16);
+  assert.equal(help.envelope.data.commands.length, 17);
   const version = await call(bin, ["--version"]);
-  assert.equal(version.envelope.data.sdkVersion, "0.1.0");
+  assert.equal(version.envelope.data.sdkVersion, "0.2.0");
   const missingAuth = await call(bin, ["capabilities"], {
     DAYKEEPER_API_URL: "https://example.test",
   });
   assert.equal(missingAuth.exitCode, 1);
   assert.equal(missingAuth.envelope.error.code, "AUTH_REQUIRED");
+
+  // `init` ships with no default hostname, so the packaged executable refuses
+  // to run before an origin is configured, and it refuses a supplied token.
+  const home = await mkdtemp(join(tmpdir(), "daykeeper-cli-smoke-home-"));
+  try {
+    const missingOrigin = await call(bin, [
+      "init",
+      "--name",
+      "Smoke Test",
+      "--home",
+      home,
+    ]);
+    assert.equal(missingOrigin.exitCode, 1);
+    assert.equal(missingOrigin.envelope.error.code, "ORIGIN_REQUIRED");
+    assert.deepEqual(missingOrigin.envelope.error.nextActions, [
+      "run_init_again",
+    ]);
+    const suppliedToken = await call(
+      bin,
+      [
+        "init",
+        "--name",
+        "Smoke Test",
+        "--origin",
+        "https://example.test",
+        "--home",
+        home,
+      ],
+      { DAYKEEPER_ACCESS_TOKEN: TEST_TOKEN },
+    );
+    assert.equal(suppliedToken.exitCode, 1);
+    assert.equal(suppliedToken.envelope.error.code, "INVALID_ARGUMENT");
+    assert.deepEqual(await readdir(home), [], "No state is written on refusal");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 
   const requests = [];
   const server = createServer((request, response) => {

@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@skyporch/daykeeper':
-        specifier: 0.1.0
-        version: 0.1.0
+        specifier: 0.2.0
+        version: 0.2.0
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -336,8 +336,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@skyporch/daykeeper@0.1.0':
-    resolution: {integrity: sha512-H37fWQViB2fEcyTTF10jRXfg+v25jsq9pQqb+rorBVdH5aS4sEkxJOM1MJxSUgwCnIPTV0NmnJW+V7GIJb1wLg==}
+  '@skyporch/daykeeper@0.2.0':
+    resolution: {integrity: sha512-1auQFVHT6vGXYIMN99BiOXAHIPRwS2yKHnQTHiAVsmB+MgXkTBlcFRN3Dczz+bI6xMYiCjiXJgPCyqESzmY7sA==}
     engines: {node: '>=20'}
 
   '@types/estree@1.0.9':
@@ -734,7 +734,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.63.1':
     optional: true
 
-  '@skyporch/daykeeper@0.1.0': {}
+  '@skyporch/daykeeper@0.2.0': {}
 
   '@types/estree@1.0.9': {}
 

@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Breaking
+
+- Pin the published `@skyporch/daykeeper` SDK `0.2.0` in place of `0.1.0`. That
+  SDK makes `idempotencyKey` mandatory on `flows.create`, `flows.createVersion`,
+  and `flows.publishVersion`, so `--idempotency-key` is now a required flag on
+  `flows create`, `flows versions create`, and `flows versions publish`. The CLI
+  still never generates a key for the caller. Every other command is unchanged.
+
+### Added
+
+- Add `daykeeper init`. One command enrolls a machine owner, stores the
+  credential locally, creates a Free workspace with one API inbox, waits for
+  provisioning, activates the inbox, and prints the inbox identifiers with
+  ready-to-paste SDK and MCP configuration. See `COMMANDS.md`.
+- `init` is the only command that persists state; every other command stays
+  stateless. State lives in a `0600` file inside a `0700` directory, written
+  through a temporary file and a rename, and a state file other accounts can
+  read is refused rather than used.
+- Every `init` step persists its intent before its mutation is sent, so a rerun
+  resumes and never creates a second workspace, credential, or inbox. `resumed`
+  and `steps` report what was skipped and what ran.
+- `init` refuses `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN`: it mints its own
+  credential and must not run under someone else's. The credential is redacted
+  from output unless `--reveal-key` is supplied, and the machine owner private
+  key is redacted unconditionally.
+- The built-in hosted origin is a single empty constant in `src/constants.ts`.
+  There is no default hostname anywhere in the code, so `init` fails with
+  `ORIGIN_REQUIRED` until a release PR sets it.
+- A stored `init` credential is pinned to the origins that issued it. A run that
+  resolves a different origin fails with `STATE_ORIGIN_MISMATCH` before any
+  request is sent, so the credential is never offered to another host.
+- `init` refuses a pre-existing `--home` other accounts can reach rather than
+  re-permissioning it, refuses a symlinked state file, and refuses a state file
+  whose directory another account can write to.
+- A `429` on a challenge-bound `init` mutation waits, then re-challenges and
+  re-signs instead of replaying a single-use proof, and refuses with a resumable
+  `RATE_LIMITED` when the delay would outlast the wait budget. Management-API
+  `429`s keep their fixed delay but are retried at most twice.
+- Only the `init` plan call may answer a taken slug with a suffixed retry. An
+  apply failure propagates with its idempotency key and recorded plan intact, so
+  a rerun replays that apply instead of creating a second plan, and the stored
+  slug counter keeps a rerun from resending a slug the server already refused.
+
 ## 0.1.0 — unreleased foundation
 
 The CLI stays at `0.1.0` and `private: true`. Nothing has been published for

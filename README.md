@@ -1,7 +1,7 @@
 # Daykeeper CLI
 
 A command line for people, agents, and CI jobs managing Daykeeper. It calls the
-published `@skyporch/daykeeper@0.1.0` SDK and returns one versioned JSON envelope
+published `@skyporch/daykeeper@0.2.0` SDK and returns one versioned JSON envelope
 per invocation. It does not depend on a private application or workspace package.
 
 This is an **unpublished foundation** for `@skyporch/daykeeper-cli`. The package
@@ -22,9 +22,34 @@ node dist/cli.js --help
 `node dist/cli.js`; the package's executable will be `daykeeper` after an
 approved publication. Do not assume this CLI is available from npm yet.
 
+## Quickstart
+
+One command gives an agent a working support inbox with no console login:
+
+```sh
+node dist/cli.js init --name "Acme Support" --plan free --origin https://your-daykeeper-origin.example --json
+```
+
+`init` enrolls a machine owner, stores the credential under
+`~/.config/daykeeper` (mode `0700`, file mode `0600`), creates a Free workspace
+with one API inbox, waits for provisioning, activates the inbox, and prints the
+identifiers with ready-to-paste SDK and MCP configuration. Run it again and it
+resumes from wherever it stopped; it never creates a second workspace,
+credential, or inbox.
+
+This repository has no built-in hostname, so supply `--origin` or set
+`DAYKEEPER_ORIGIN`; without one, `init` fails with `ORIGIN_REQUIRED`. The
+credential is redacted from output unless you pass `--reveal-key`, but
+`<home>/mcp.json` always carries the literal credential so an MCP client can
+read it. `init` refuses `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN`, because it
+mints its own credential and must not run under someone else's. Full flags,
+state layout, resume behavior, and error codes are in
+[COMMANDS.md](COMMANDS.md).
+
 ## Authenticate
 
-Set `DAYKEEPER_API_URL` to your intended management API origin, including any
+`init` is the only command that stores a credential. Every other command takes
+one you supply. Set `DAYKEEPER_API_URL` to your intended management API origin, including any
 reverse-proxy prefix. There is no default production endpoint. Remote origins
 must use HTTPS; `http://127.0.0.1` and `http://localhost` are supported for local
 development. URLs with credentials, query strings, or fragments are rejected,
@@ -35,8 +60,8 @@ Supply a scoped access token using one of these sources:
 - `DAYKEEPER_ACCESS_TOKEN`, injected by your secret manager or CI environment.
 - `--token-stdin`, with the token piped from a trusted credential provider.
 
-Use exactly one source. The CLI accepts no token argument, stores no credential,
-and never opens an interactive sign-in prompt. Tokens must be 20–16,384 bearer
+Use exactly one source. Outside `init`, the CLI accepts no token argument,
+stores no credential, and never opens an interactive sign-in prompt. Tokens must be 20–16,384 bearer
 characters. It uses the supplied token for one request and does not attempt a
 credential refresh after a `401`.
 
@@ -94,9 +119,9 @@ Use `--timeout-ms` or `DAYKEEPER_TIMEOUT_MS` to set one 1–60 second budget for
 input reading and the API request (default: 30 seconds). Cancellation aborts the
 local request, not work already accepted by the server. An interrupted mutation
 reports `mutationOutcome: "unknown"`; inspect the relevant resource or operation
-before retrying. For plan/apply, reuse the original idempotency key for the exact
-same logical action. Flow mutations and operation retries have no idempotency
-key in SDK `0.1.0`; they are never replayed automatically.
+before retrying. For plan/apply and flow mutations, reuse the original idempotency
+key for the exact same logical action. Operation retries have no idempotency key
+in SDK `0.2.0`; they are never replayed automatically.
 
 API failures retain their bounded error code, status, retryability, safe field
 names, next actions, and correlation ID. Raw remote messages, request bodies,
@@ -108,7 +133,9 @@ redacted if reflected in output.
 
 ## What is not implemented
 
-- Hosted OAuth login, signup, account ownership verification, or token refresh.
+- Hosted OAuth login, human signup, account ownership verification, or token
+  refresh. `init` performs machine enrollment only; human claim of an
+  agent-created workspace stays in the console.
 - Membership or API-key administration, billing, usage, or entitlement changes.
 - Automatic DNS changes, operation polling, background workers, or flow execution.
 - Customer-session token issuance from the CLI; credentials are never minted to stdout.
@@ -123,8 +150,9 @@ does not mean that a flow is executing against conversations.
 pnpm check
 ```
 
-Checks cover all 16 command mappings through the real published SDK, input and
-credential boundaries, denial/redaction behavior, deadlines and cancellation,
+Checks cover all 16 single-call command mappings through the real published SDK,
+the whole `init` step machine against loopback onboarding and management
+fixtures with state in a temporary home, input and credential boundaries, denial/redaction behavior, deadlines and cancellation,
 the compiled executable against a synthetic loopback API, and an unpacked npm
 tarball with its pinned production dependencies installed offline using a
 verification-only copy of this repository's frozen lockfile. That lockfile is
