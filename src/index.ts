@@ -60,7 +60,7 @@ export async function runCli(
             ? {
                 output: "One JSON envelope on stdout. No interactive prompts.",
                 authentication:
-                  "DAYKEEPER_ACCESS_TOKEN or --token-stdin; use exactly one source. The server enforces scopes and tenant access.",
+                  "DAYKEEPER_ACCESS_TOKEN or --token-stdin; use exactly one source. The server enforces scopes and tenant access. init is the exception: it mints and stores its own credential and rejects both sources.",
                 globalOptions: [
                   "--base-url",
                   "--timeout-ms",

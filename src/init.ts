@@ -439,9 +439,9 @@ async function execute(
   // 7. Activate. A succeeded operation alone does not enable traffic.
   progress.setStep("inbox_activate");
   let channel: InboxChannel = await request(() => client.inboxes.get(tenantId));
-  if (channel.trafficEnabled) {
-    skipped();
-  } else {
+  // An inbox that already carries traffic needs no activation. That is a server
+  // fact, not a persisted result, so it does not by itself mean `resumed`.
+  if (!channel.trafficEnabled) {
     const activation = inbox().activationIntent ?? generateIdempotencyKey();
     inbox().activationIntent = activation;
     await save();

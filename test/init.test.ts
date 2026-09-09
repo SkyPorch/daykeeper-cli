@@ -531,6 +531,7 @@ test("a rerun resumes, reports resumed, and sends no mutation", async () => {
   assert.equal(result.exitCode, 0, result.output);
   assert.equal(result.envelope.data.resumed, true);
   assert.deepEqual(result.envelope.data.steps, []);
+  assert.equal(result.envelope.data.inbox.trafficEnabled, true);
   assert.deepEqual(
     server.requests
       .filter((request) => request.method !== "GET")
@@ -703,10 +704,21 @@ test("an existing tenant is adopted rather than duplicated", async () => {
   const directory = await home();
   const server = fixture({
     tenants: [{ id: TENANT, spec: { name: "Existing", slug: "existing" } }],
+    trafficEnabled: [true],
   });
   const result = await init({ home: directory, fixture: server });
   assert.equal(result.exitCode, 0, result.output);
-  assert(result.envelope.data.steps.includes("inbox_adopt"));
+  assert.equal(
+    result.envelope.data.resumed,
+    false,
+    "An inbox that already carries traffic is not a resumed step",
+  );
+  assert.deepEqual(result.envelope.data.steps, [
+    "owner_key",
+    "enroll",
+    "inbox_adopt",
+    "inbox_wait",
+  ]);
   assert.equal(server.sent("POST", "/v1/tenant-plans").length, 0);
   assert.equal(result.envelope.data.inbox.slug, "existing");
 });
