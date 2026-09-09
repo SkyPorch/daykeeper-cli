@@ -7,6 +7,20 @@ The CLI prints exactly one JSON envelope on stdout and never prompts.
 - Node.js 20 or newer.
 - A scoped Daykeeper access token.
 
+## Starting from nothing
+
+`daykeeper init` is the one command that needs no credential. It enrolls a
+machine owner, creates a Free workspace with one API inbox, and stores the
+credential locally:
+
+```sh
+daykeeper init --name "Acme Support" --origin https://your-daykeeper-origin.example
+```
+
+Rerun it to resume; it never creates a second workspace, credential, or inbox.
+Every command below uses a credential you already have. See `COMMANDS.md` for
+the full `init` contract.
+
 ## Configuration
 
 Two environment variables:

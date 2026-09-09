@@ -10,6 +10,27 @@
   `flows create`, `flows versions create`, and `flows versions publish`. The CLI
   still never generates a key for the caller. Every other command is unchanged.
 
+### Added
+
+- Add `daykeeper init`. One command enrolls a machine owner, stores the
+  credential locally, creates a Free workspace with one API inbox, waits for
+  provisioning, activates the inbox, and prints the inbox identifiers with
+  ready-to-paste SDK and MCP configuration. See `COMMANDS.md`.
+- `init` is the only command that persists state; every other command stays
+  stateless. State lives in a `0600` file inside a `0700` directory, written
+  through a temporary file and a rename, and a state file other accounts can
+  read is refused rather than used.
+- Every `init` step persists its intent before its mutation is sent, so a rerun
+  resumes and never creates a second workspace, credential, or inbox. `resumed`
+  and `steps` report what was skipped and what ran.
+- `init` refuses `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN`: it mints its own
+  credential and must not run under someone else's. The credential is redacted
+  from output unless `--reveal-key` is supplied, and the machine owner private
+  key is redacted unconditionally.
+- The built-in hosted origin is a single empty constant in `src/constants.ts`.
+  There is no default hostname anywhere in the code, so `init` fails with
+  `ORIGIN_REQUIRED` until a release PR sets it.
+
 ## 0.1.0 — unreleased foundation
 
 The CLI stays at `0.1.0` and `private: true`. Nothing has been published for
