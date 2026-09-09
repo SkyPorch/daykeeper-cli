@@ -112,7 +112,7 @@ test("help and version are deterministic JSON and never read credentials or stdi
   assert.equal(first.exitCode, 0);
   assert.equal(first.requests.length, 0);
   assert.equal(reads, 0);
-  assert.equal(first.envelope.data.commands.length, 16);
+  assert.equal(first.envelope.data.commands.length, 17);
   const version = await invoke(["--version"], { env: {} });
   assert.deepEqual(version.envelope.data, {
     name: "@skyporch/daykeeper-cli",
@@ -282,7 +282,9 @@ test("the command catalog and tested SDK dispatch matrix remain identical", () =
     commandCatalog()
       .map((command) => command.name)
       .sort(),
-    cases.map((fixture) => fixture.command).sort(),
+    // `init` is the one command that is not a single SDK call; its whole
+    // contract is exercised in test/init.test.ts.
+    [...cases.map((fixture) => fixture.command), "init"].sort(),
   );
 });
 

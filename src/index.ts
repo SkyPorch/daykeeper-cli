@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DaykeeperClient } from "@skyporch/daykeeper";
 import {
   CLI_VERSION,
@@ -11,7 +12,8 @@ import {
   parseCommand,
   type ParsedCommand,
 } from "./commands.ts";
-import { CliError, errorEnvelope } from "./errors.ts";
+import { CliError, errorEnvelope, reportedOutcomeUnknown } from "./errors.ts";
+import { InitStepError, realClock, runInit, type InitClock } from "./init.ts";
 import { readBounded, readJsonInput, type InputStream } from "./io.ts";
 import { positiveInteger, validateInput } from "./schemas.ts";
 
@@ -23,6 +25,8 @@ export interface CliContext {
   write: (line: string) => void;
   fetch?: typeof globalThis.fetch;
   signal?: AbortSignal;
+  /** Test seam for `init`'s bounded polling and rate-limit waits. */
+  clock?: InitClock;
 }
 
 export async function runCli(
@@ -33,11 +37,13 @@ export async function runCli(
   let requestSent = false;
   let exitCode = 0;
   const secrets: string[] = [];
+  const revealed = new Map<string, string>();
   const environmentToken = context.env.DAYKEEPER_ACCESS_TOKEN;
   if (environmentToken && environmentToken.length >= 20)
     secrets.push(environmentToken);
   let cleanup = () => {};
   let controller: AbortController | undefined;
+  let initFailure: InitStepError | undefined;
   let envelope: Record<string, unknown>;
   try {
     parsed = parseCommand(args);
@@ -70,21 +76,57 @@ export async function runCli(
             : {}),
         },
       };
-    } else {
-      const timeoutMs = positiveInteger(
-        String(
-          parsed.options["timeout-ms"] ??
-            context.env.DAYKEEPER_TIMEOUT_MS ??
-            "30000",
-        ),
-        "timeout-ms",
-      );
-      if (timeoutMs < 1000 || timeoutMs > 60000)
+    } else if (parsed.command?.name === "init") {
+      // `init` mints its own credential, so it never runs under a supplied
+      // token, and its own wait budget bounds the run instead of one deadline.
+      if (environmentToken)
         throw new CliError(
           "INVALID_ARGUMENT",
-          "The timeout must be 1000–60000 milliseconds.",
-          ["timeout-ms"],
+          "init creates its own credential; unset DAYKEEPER_ACCESS_TOKEN before running it.",
+          ["DAYKEEPER_ACCESS_TOKEN"],
         );
+      const timeoutMs = requestTimeoutMs(parsed.options, context.env);
+      const transport = context.fetch ?? globalThis.fetch;
+      const signal = context.signal ?? new AbortController().signal;
+      const data = await runInit({
+        options: parsed.options,
+        env: context.env,
+        timeoutMs,
+        signal,
+        clock: context.clock ?? realClock,
+        fetch: (url, options) => {
+          if (signal.aborted) throw signal.reason;
+          requestSent = true;
+          return transport(url, {
+            ...options,
+            signal: linkSignals(options?.signal ?? undefined, signal),
+            redirect: "error",
+            credentials: "omit",
+          });
+        },
+        addSecret: (secret) => {
+          if (secret) secrets.push(secret);
+        },
+        reveal: (secret) => {
+          const placeholder = `daykeeper-cli-revealed-${randomUUID()}`;
+          revealed.set(placeholder, secret);
+          return placeholder;
+        },
+      }).catch((error: unknown) => {
+        if (error instanceof InitStepError) {
+          initFailure = error;
+          throw error.failure;
+        }
+        throw error;
+      });
+      envelope = {
+        schemaVersion: ENVELOPE_VERSION,
+        ok: true,
+        command: "init",
+        data,
+      };
+    } else {
+      const timeoutMs = requestTimeoutMs(parsed.options, context.env);
       const baseUrl =
         parsed.options["base-url"] ?? context.env.DAYKEEPER_API_URL;
       if (typeof baseUrl !== "string" || !baseUrl)
@@ -217,16 +259,34 @@ export async function runCli(
     const actual = controller?.signal.aborted
       ? controller.signal.reason
       : error;
-    const details = errorEnvelope(actual, secrets);
+    const projected = errorEnvelope(actual, secrets);
+    // `init` reports the step it reached, and says a rerun resumes whenever
+    // the state file already carries the work that was completed.
+    const details = initFailure
+      ? {
+          ...projected,
+          fields: [...new Set([...projected.fields, initFailure.step])],
+          nextActions: [
+            ...new Set([
+              ...projected.nextActions,
+              ...(initFailure.resumable ? ["run_init_again"] : []),
+            ]),
+          ],
+        }
+      : projected;
     const uncertainMutation =
-      requestSent &&
-      parsed?.command?.effect !== "read" &&
-      (details.kind === "transport" ||
-        details.code === "REQUEST_TIMEOUT" ||
-        details.code === "REQUEST_ABORTED" ||
-        ("status" in details &&
-          typeof details.status === "number" &&
-          details.status >= 500));
+      parsed?.command?.name === "init"
+        ? // One `init` sends both reads and mutations, so only the SDK's own
+          // per-request signal says whether a mutation was left uncertain.
+          reportedOutcomeUnknown(actual)
+        : requestSent &&
+          parsed?.command?.effect !== "read" &&
+          (details.kind === "transport" ||
+            details.code === "REQUEST_TIMEOUT" ||
+            details.code === "REQUEST_ABORTED" ||
+            ("status" in details &&
+              typeof details.status === "number" &&
+              details.status >= 500));
     envelope = {
       schemaVersion: ENVELOPE_VERSION,
       ok: false,
@@ -239,12 +299,14 @@ export async function runCli(
               nextActions: [
                 ...new Set([
                   ...details.nextActions,
-                  ...(parsed?.command?.name.endsWith(" apply")
-                    ? [
-                        "inspect_operation_before_retry",
-                        "reuse_original_idempotency_key",
-                      ]
-                    : ["inspect_resource_before_retry"]),
+                  ...(parsed?.command?.name === "init"
+                    ? ["run_init_again"]
+                    : parsed?.command?.name.endsWith(" apply")
+                      ? [
+                          "inspect_operation_before_retry",
+                          "reuse_original_idempotency_key",
+                        ]
+                      : ["inspect_resource_before_retry"]),
                 ]),
               ],
             }
@@ -264,8 +326,41 @@ export async function runCli(
     const escaped = JSON.stringify(secret).slice(1, -1);
     if (escaped) output = output.split(escaped).join("[REDACTED]");
   }
+  // Redaction runs first and unconditionally. `--reveal-key` then restores the
+  // one value the caller explicitly asked to see, and nothing else.
+  for (const [placeholder, secret] of revealed) {
+    output = output
+      .split(placeholder)
+      .join(JSON.stringify(secret).slice(1, -1));
+  }
   context.write(`${output}\n`);
   return exitCode;
+}
+
+function requestTimeoutMs(
+  options: Readonly<Record<string, string | boolean | undefined>>,
+  env: Readonly<Record<string, string | undefined>>,
+): number {
+  const timeoutMs = positiveInteger(
+    String(options["timeout-ms"] ?? env.DAYKEEPER_TIMEOUT_MS ?? "30000"),
+    "timeout-ms",
+  );
+  if (timeoutMs < 1000 || timeoutMs > 60000)
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "The timeout must be 1000–60000 milliseconds.",
+      ["timeout-ms"],
+    );
+  return timeoutMs;
+}
+
+/** Keep the SDK's own per-request lifetime while honoring CLI cancellation. */
+function linkSignals(
+  request: AbortSignal | undefined,
+  outer: AbortSignal,
+): AbortSignal {
+  if (!request) return outer;
+  return AbortSignal.any([request, outer]);
 }
 
 function abortable<Value>(

@@ -31,7 +31,7 @@
     "daykeeper": "node --import tsx src/cli.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --import tsx --test test/cli.test.ts test/release.test.ts",
+    "test": "node --import tsx --test test/cli.test.ts test/init.test.ts test/release.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "pack:check": "node scripts/verify-package.mjs",

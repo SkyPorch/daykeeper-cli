@@ -27,6 +27,27 @@ interface Command {
 
 const commands: readonly Command[] = [
   {
+    name: "init",
+    effect: "mutation",
+    summary:
+      "Enroll a machine owner, create one Free workspace with an API inbox, and store the credential.",
+    required: ["name"],
+    optional: [
+      "plan",
+      "origin",
+      "onboarding-url",
+      "gateway-url",
+      "slug",
+      "locale",
+      "home",
+      "wait-ms",
+      "reveal-key",
+    ],
+    // The credential this command mints carries its own fixed scopes. The
+    // command itself runs without a pre-existing access token.
+    scopes: [],
+  },
+  {
     name: "capabilities",
     effect: "read",
     summary: "Inspect server capabilities and execution gates.",
@@ -172,8 +193,17 @@ const stringOptions = [
   "version",
   "expected-resource-version",
   "input",
+  "name",
+  "plan",
+  "origin",
+  "onboarding-url",
+  "gateway-url",
+  "slug",
+  "locale",
+  "home",
+  "wait-ms",
 ];
-const booleanOptions = ["token-stdin", "json", "help"];
+const booleanOptions = ["token-stdin", "json", "help", "reveal-key"];
 
 export interface ParsedCommand {
   command?: Command;
@@ -257,6 +287,13 @@ export function parseCommand(args: readonly string[]): ParsedCommand {
       "MISSING_ARGUMENT",
       "Required options are missing. No request was sent.",
       missing,
+    );
+  }
+  if (command.name === "init" && options["token-stdin"]) {
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "init creates its own credential and must not run under another access token.",
+      ["token-stdin"],
     );
   }
   if (options["token-stdin"] && options.input === "-") {
