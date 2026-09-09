@@ -68,10 +68,11 @@ daykeeper init --name "Acme Support" --plan free --json
 | `--slug <slug>`                                   | no       | Inbox slug. Default: the slugified name, truncated to 63, falling back to `inbox`.                      |
 | `--locale <tag>`                                  | no       | Default `en`.                                                                                           |
 | `--home <dir>`                                    | no       | Where state lives. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`. |
-| `--wait-ms <n>`                                   | no       | Provisioning wait budget, 10000–900000. Default 300000.                                                 |
+| `--wait-ms <n>`                                   | no       | Budget for provisioning polling and rate-limit sleeps, 10000–900000. Default 300000.                    |
 | `--reveal-key`                                    | no       | Print the literal credential in the JSON output. Off by default.                                        |
 
-`--timeout-ms` applies per request; `--wait-ms` bounds the whole run.
+`--timeout-ms` applies per request; `--wait-ms` bounds provisioning polling and
+rate-limit sleeps only, not the run's total duration and not any single request.
 `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN` are rejected with
 `INVALID_ARGUMENT`: `init` creates its own credential and must not run under
 someone else's. There is no built-in default hostname in this repository, so
@@ -84,9 +85,23 @@ through a temporary file and a rename. A state file that any other account can
 read is refused with `STATE_INSECURE` rather than used. The file holds the
 machine owner private key, the enrollment intent and its idempotency key, the
 workspace and credential identifiers, the reveal-once credential, and the
-inbox's apply key, operation id, provisioning timestamp, and activation intent.
-The private key is never transmitted and cannot be recovered if the file is
-lost, which the file's own `warning` field states.
+inbox's slug attempt counter, recorded plan, apply key, operation id,
+provisioning timestamp, and activation intent. The private key is never
+transmitted and cannot be recovered if the file is lost, which the file's own
+`warning` field states.
+
+A home directory `init` creates is set to `0700`. A `--home` that already exists
+is inspected, never re-permissioned: any group or world bit fails with
+`STATE_INSECURE`. The state file is opened with `O_NOFOLLOW` where the platform
+provides it, so a symlinked path is refused, and a state file whose directory
+another account can write to is refused as well.
+
+The state file also records the origins its credential was minted against. If a
+later run resolves a different `--origin`, `--onboarding-url`, `--base-url`, or
+`--gateway-url`, it fails with `STATE_ORIGIN_MISMATCH` before any request is
+sent, so a stored credential is never offered to a host that did not issue it.
+The error names the differing flags and the two hostnames, never the configured
+URLs, and it is not resumable: use a separate `--home` per origin.
 
 `<home>/mcp.json` is written at mode `0600` and is the one place besides the
 state file that carries the literal credential, because MCP clients read
@@ -106,10 +121,21 @@ enrollment idempotency key, tenant apply key, rotation intent, and activation
 intent verbatim, so the server replays the stored result instead of applying a
 second change. A replayed enrollment never re-reveals its credential, so a run
 that finds a claimed workspace with no stored token rotates instead; a
-credential inside its last 24 hours rotates the same way. A slug conflict
-appends `-2`, `-3`; a `TENANT_QUOTA_EXCEEDED` is surfaced and never retried.
+credential inside its last 24 hours rotates the same way. A slug conflict from
+the plan call appends `-2`, `-3`, and the attempt counter is stored so a crash
+mid-conflict resumes at the next unused suffix; the accepted plan is stored
+before the apply is sent, so an apply that fails propagates and the rerun
+replays the same key against the same plan instead of creating a second one. A
+`TENANT_QUOTA_EXCEEDED` is surfaced and never retried.
+
 Provisioning is polled every 3 seconds inside `--wait-ms`, and a `429` is
-honored for its `Retry-After` without ever exceeding that budget.
+honored for its `Retry-After` without ever exceeding that budget. A `429` on a
+challenge-bound mutation is never resent with the same proof: the run waits, then
+requests a new challenge and signs again, and refuses with a resumable
+`RATE_LIMITED` when the delay would outlast the remaining budget. Management-API
+`429`s use a fixed 3-second delay and are retried at most twice, because the
+published SDK does not project `Retry-After` on `DaykeeperApiError`; once it
+does, that delay follows the header like the onboarding ones.
 
 ### Output
 
@@ -181,7 +207,8 @@ carries the literal credential either way. With `--reveal-key`, both
 ### Errors
 
 `init` adds `ORIGIN_REQUIRED`, `STATE_UNREADABLE`, `STATE_INSECURE`,
-`PROVISIONING_FAILED`, `PROVISIONING_TIMEOUT`, `ACTIVATION_UNAVAILABLE`, and
+`STATE_ORIGIN_MISMATCH`, `RATE_LIMITED`, `PROVISIONING_FAILED`,
+`PROVISIONING_TIMEOUT`, `ACTIVATION_UNAVAILABLE`, and
 `CREDENTIAL_UNRECOVERABLE`. Every error reports the step it reached in `fields`
 and carries `nextActions: ["run_init_again"]` whenever a rerun can resume.
 `PROVISIONING_FAILED` also carries the `operationId` and next action

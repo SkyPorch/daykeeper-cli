@@ -30,6 +30,20 @@
 - The built-in hosted origin is a single empty constant in `src/constants.ts`.
   There is no default hostname anywhere in the code, so `init` fails with
   `ORIGIN_REQUIRED` until a release PR sets it.
+- A stored `init` credential is pinned to the origins that issued it. A run that
+  resolves a different origin fails with `STATE_ORIGIN_MISMATCH` before any
+  request is sent, so the credential is never offered to another host.
+- `init` refuses a pre-existing `--home` other accounts can reach rather than
+  re-permissioning it, refuses a symlinked state file, and refuses a state file
+  whose directory another account can write to.
+- A `429` on a challenge-bound `init` mutation waits, then re-challenges and
+  re-signs instead of replaying a single-use proof, and refuses with a resumable
+  `RATE_LIMITED` when the delay would outlast the wait budget. Management-API
+  `429`s keep their fixed delay but are retried at most twice.
+- Only the `init` plan call may answer a taken slug with a suffixed retry. An
+  apply failure propagates with its idempotency key and recorded plan intact, so
+  a rerun replays that apply instead of creating a second plan, and the stored
+  slug counter keeps a rerun from resending a slug the server already refused.
 
 ## 0.1.0 — unreleased foundation
 

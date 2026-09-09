@@ -36,12 +36,14 @@ const commands: readonly Command[] = [
       "plan",
       "origin",
       "onboarding-url",
+      "base-url",
       "gateway-url",
       "slug",
       "locale",
       "home",
       "wait-ms",
       "reveal-key",
+      "json",
     ],
     // The credential this command mints carries its own fixed scopes. The
     // command itself runs without a pre-existing access token.

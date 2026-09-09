@@ -34,7 +34,7 @@ stateless as documented in `COMMANDS.md`; that rule is revised, not removed.
 | `--slug <slug>`                                   | no       | Inbox slug. Default: slugified `--name`, truncated to 63, fallback `inbox`.                                                                             |
 | `--locale <tag>`                                  | no       | Default `en`.                                                                                                                                           |
 | `--home <dir>`                                    | no       | Where state lives. Default: `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`.                                            |
-| `--wait-ms <n>`                                   | no       | Provisioning wait budget, 10000 to 900000. Default 300000.                                                                                              |
+| `--wait-ms <n>`                                   | no       | Budget for provisioning polling and rate-limit sleeps, 10000 to 900000. Default 300000. It does not bound request time; `--timeout-ms` does.            |
 | `--reveal-key`                                    | no       | Include the literal server key in the JSON output. Off by default; see Secrets.                                                                         |
 | `--json`                                          | no       | Accepted for symmetry with the documented command. Output is always JSON.                                                                               |
 
@@ -54,7 +54,13 @@ any point leaves a state file the next run can resume from.
 1. **Preflight.** `GET /v1/capabilities` with no credential is not available,
    so preflight is the origin check only: HTTPS, no path, no credentials, no
    query. `http://localhost` and `http://127.0.0.1` are the only plaintext
-   exceptions, for development.
+   exceptions, for development. A stored credential is then pinned to the
+   origins that issued it: if the state file's `origin`, `onboardingUrl`,
+   `apiUrl`, or `gatewayUrl` differs from the resolved one, the run fails with
+   `STATE_ORIGIN_MISMATCH` before a single request is sent, so a stored token is
+   never offered to a host that did not issue it. The error names the differing
+   flags and reports the two hostnames; it never echoes a configured URL. It is
+   not resumable: use a separate `--home` per origin, or remove the state file.
 2. **Owner key.** If the state file has no private key, generate a P-256 key
    with `DaykeeperMachineSigner.generate()`, export the private JWK, and write
    it. The key is never regenerated. Losing it is unrecoverable by design, so
@@ -78,7 +84,13 @@ any point leaves a state file the next run can resume from.
    and store its id; the Free plan allows exactly one. Otherwise
    `tenants.plan({ name, slug, locale, inbox: { type: "api" } })` and
    `tenants.apply({ planId, planVersion }, { idempotencyKey })` with a stored
-   apply key. A `RESOURCE_CONFLICT` on the slug appends `-2`, `-3`. A
+   apply key. Only the plan call may answer `RESOURCE_CONFLICT` with a taken
+   slug, and only it appends `-2`, `-3`; the attempt counter is stored, so a
+   conflict followed by a crash resumes at the next unused suffix instead of
+   resending a slug the server already refused. The accepted plan id and
+   version are stored before the apply is sent: a failed apply propagates with
+   its idempotency key intact, and the rerun replays that same key against that
+   same plan rather than minting a second plan under a new slug. A
    `TENANT_QUOTA_EXCEEDED` means a tenant exists that the list did not show;
    surface it, do not retry.
 6. **Wait.** Poll `tenants.getProvisioningOperation(tenantId)` every 3 seconds
@@ -93,7 +105,15 @@ any point leaves a state file the next run can resume from.
 8. **Write config and print.** Write `<home>/mcp.json` containing the literal
    MCP block, mode 0600, and print the result below.
 
-Every request honors `Retry-After` on 429 and never exceeds the wait budget.
+Every request honors `Retry-After` on 429 and never exceeds the wait budget. A
+429 on a challenge-bound mutation — enrollment create, rotation create, and the
+rotation `current` probe — is not resent with the same proof, because that proof
+is single-use and expires in a minute: the run waits out the delay, then asks
+for a new challenge and signs again. A delay that would outlast the remaining
+budget fails with `RATE_LIMITED`, which is resumable. Management-API 429s carry
+no projected `Retry-After` through the SDK, so they use a fixed three-second
+delay and are retried at most twice.
+
 Mutations are sent exactly once per stored intent. An `outcomeUnknown` error
 is reported as `mutationOutcome: "unknown"` and the state file keeps the intent,
 so the rerun replays it instead of minting a second one.
@@ -103,6 +123,15 @@ so the rerun replays it instead of minting a second one.
 `<home>/credentials.json`, directory mode 0700, file mode 0600, written with a
 temporary file and rename. Refuse to read a file whose mode allows group or
 world access.
+
+A home directory this command creates is set to 0700. A `--home` that already
+exists is inspected instead: any group or world bit fails with `STATE_INSECURE`
+rather than being silently re-permissioned, because the caller may have set that
+mode deliberately and a credential must not be written into it. The state file
+is opened with `O_NOFOLLOW` where the platform has it, so a symlinked path is
+refused rather than followed, and a state file whose directory is writable by
+another account is refused as well: that account could replace the file whole,
+which the file's own 0600 mode would not reveal.
 
 ```json
 {
@@ -127,6 +156,9 @@ world access.
   "inbox": {
     "tenantId": "…",
     "slug": "acme-support",
+    "slugAttempt": 0,
+    "planId": "…",
+    "planVersion": 1,
     "applyIdempotencyKey": "…",
     "operationId": "…",
     "activationIntent": "…"
@@ -208,8 +240,9 @@ point its MCP client at the file. `resumed` is true when any step was skipped
 because the state file already had its result. `steps` lists what ran.
 
 Errors use the standard envelope. New CLI codes: `ORIGIN_REQUIRED`,
-`STATE_UNREADABLE`, `STATE_INSECURE`, `PROVISIONING_FAILED`,
-`PROVISIONING_TIMEOUT`, `ACTIVATION_UNAVAILABLE`, `CREDENTIAL_UNRECOVERABLE`.
+`STATE_UNREADABLE`, `STATE_INSECURE`, `STATE_ORIGIN_MISMATCH`, `RATE_LIMITED`,
+`PROVISIONING_FAILED`, `PROVISIONING_TIMEOUT`, `ACTIVATION_UNAVAILABLE`,
+`CREDENTIAL_UNRECOVERABLE`.
 Every error carries `nextActions: ["run_init_again"]` when a rerun can resume,
 and the step reached in `fields`.
 
@@ -245,7 +278,14 @@ credential rotates; slug conflict suffixes; provisioning failed, cancelled, and
 timeout; activation unavailable; 429 with `Retry-After`; `outcomeUnknown` on
 apply keeps the intent; token and private key never appear in output without
 `--reveal-key`; `--plan pro` rejected; `--token-stdin` rejected; insecure state
-file mode rejected; `ORIGIN_REQUIRED` when no origin is configured.
+file mode rejected; `ORIGIN_REQUIRED` when no origin is configured; a stored
+credential refused for a second origin before any request; an apply conflict
+that neither suffixes the slug nor re-plans on the rerun; a slug conflict
+followed by a crash resuming at the next suffix; a credential echoed back by the
+server redacted from the moment it was issued; a 429 on enrollment and rotation
+create re-challenging; a rate limit past the budget refused; a management 429
+capped at two retries; a pre-existing wide `--home` and a symlinked state file
+both refused.
 
 ## Out of scope
 

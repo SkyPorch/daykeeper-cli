@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readFile,
   stat,
+  symlink,
   writeFile,
   chmod,
   mkdir,
@@ -1013,6 +1014,312 @@ test("per-service overrides and environment defaults are honored", async () => {
     apiUrl: ORIGIN,
     gatewayUrl: "https://gateway.example.test",
   });
+});
+
+test("a stored credential is pinned to the origin that issued it", async () => {
+  const directory = await home();
+  await init({ home: directory, fixture: fixture() });
+  const server = fixture();
+  const result = await init({
+    home: directory,
+    fixture: server,
+    args: ["--origin", "https://other.example.test"],
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "STATE_ORIGIN_MISMATCH");
+  assert.equal(result.envelope.error.retryable, false);
+  assert.deepEqual(result.envelope.error.nextActions, []);
+  assert.deepEqual(result.envelope.error.fields.toSorted(), [
+    "base-url",
+    "gateway-url",
+    "onboarding-url",
+    "origin",
+    "state",
+  ]);
+  assert.equal(result.envelope.error.storedHost, "daykeeper.example.test");
+  assert.equal(result.envelope.error.requestedHost, "other.example.test");
+  assert.equal(
+    server.requests.length,
+    0,
+    "A stored credential is never offered to another host",
+  );
+});
+
+test("an apply conflict never suffixes the slug or mints a second plan", async () => {
+  const directory = await home();
+  const broken = fixture({
+    once: {
+      "POST /v1/tenants:apply": [() => apiError(409, "RESOURCE_CONFLICT")],
+    },
+  });
+  const failed = await init({ home: directory, fixture: broken });
+  assert.equal(failed.exitCode, 1);
+  assert.equal(failed.envelope.error.code, "RESOURCE_CONFLICT");
+  assert.equal(
+    broken.sent("POST", "/v1/tenant-plans").length,
+    1,
+    "Only a plan conflict may suffix the slug",
+  );
+  assert.equal(broken.sent("POST", "/v1/tenants:apply").length, 1);
+  const stored = await readStateFile(directory);
+  assert.equal(stored.inbox.slug, "acme-support");
+  const key = stored.inbox.applyIdempotencyKey as string;
+  assert.equal(
+    broken.sent("POST", "/v1/tenants:apply")[0]!.headers.get("idempotency-key"),
+    key,
+  );
+
+  const server = fixture();
+  const resumed = await init({ home: directory, fixture: server });
+  assert.equal(resumed.exitCode, 0, resumed.output);
+  assert.equal(
+    server.sent("POST", "/v1/tenant-plans").length,
+    0,
+    "The recorded plan is replayed rather than re-created",
+  );
+  assert.equal(
+    server.sent("POST", "/v1/tenants:apply")[0]!.headers.get("idempotency-key"),
+    key,
+  );
+  assert.equal(resumed.envelope.data.inbox.slug, "acme-support");
+});
+
+test("a slug conflict followed by a crash never resends the refused slug", async () => {
+  const directory = await home();
+  const broken = fixture({
+    once: {
+      "POST /v1/tenant-plans": [
+        () => apiError(409, "RESOURCE_CONFLICT"),
+        () => {
+          throw new Error("connection reset");
+        },
+      ],
+    },
+  });
+  const failed = await init({ home: directory, fixture: broken });
+  assert.equal(failed.exitCode, 1);
+  assert.deepEqual(
+    broken.sent("POST", "/v1/tenant-plans").map((entry) => entry.body!.slug),
+    ["acme-support", "acme-support-2"],
+  );
+
+  const server = fixture({ takenSlugs: ["acme-support", "acme-support-2"] });
+  const resumed = await init({ home: directory, fixture: server });
+  assert.equal(resumed.exitCode, 0, resumed.output);
+  assert.deepEqual(
+    server.sent("POST", "/v1/tenant-plans").map((entry) => entry.body!.slug),
+    ["acme-support-2", "acme-support-3"],
+    "The suffix counter resumes instead of restarting",
+  );
+});
+
+test("a credential is redacted from the moment it is issued", async () => {
+  const directory = await home();
+  // The enrolled credential expires inside a day, so the run rotates and the
+  // issued credential is superseded before it is ever stored as the live one.
+  const server: Fixture = fixture({
+    expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+    once: {
+      "GET /v1/tenants": [
+        () =>
+          Response.json(
+            {
+              error: {
+                code: "INVALID_INPUT",
+                message: "Rejected",
+                retryable: false,
+                fields: [server.tokens[0]],
+              },
+            },
+            { status: 400 },
+          ),
+      ],
+    },
+  });
+  const result = await init({ home: directory, fixture: server });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "INVALID_INPUT");
+  const issued = server.tokens[0]!;
+  assert.match(issued, /^dk_machine_/);
+  assert(
+    !result.output.includes(issued),
+    "An echoed credential is redacted even before it is stored",
+  );
+});
+
+test("a 429 on the enrollment mutation re-challenges instead of replaying the proof", async () => {
+  const directory = await home();
+  const server = fixture({
+    once: {
+      "POST /v1/machine-enrollments": [
+        () => apiError(429, "RATE_LIMITED", { "retry-after": "5" }),
+      ],
+    },
+  });
+  const timing = fakeClock();
+  const result = await init({
+    home: directory,
+    fixture: server,
+    clock: timing.clock,
+  });
+  assert.equal(result.exitCode, 0, result.output);
+  assert.equal(
+    server.sent("POST", "/v1/machine-enrollments/challenges").length,
+    2,
+    "A refused proof is never replayed",
+  );
+  const creates = server.sent("POST", "/v1/machine-enrollments");
+  assert.equal(creates.length, 2);
+  assert.notEqual(creates[0]!.body!.challengeId, creates[1]!.body!.challengeId);
+  assert.deepEqual(timing.waits, [5000]);
+});
+
+test("a 429 on the rotation mutation re-challenges before signing again", async () => {
+  const directory = await home();
+  const server = fixture({
+    enrollment: "replayed",
+    once: {
+      "POST /v1/machine-credential-rotations": [
+        () => apiError(429, "RATE_LIMITED", { "retry-after": "4" }),
+      ],
+    },
+  });
+  const timing = fakeClock();
+  const result = await init({
+    home: directory,
+    fixture: server,
+    clock: timing.clock,
+  });
+  assert.equal(result.exitCode, 0, result.output);
+  assert.equal(
+    server.sent("POST", "/v1/machine-credential-rotations/challenges").length,
+    2,
+  );
+  assert.deepEqual(timing.waits, [4000]);
+});
+
+test("a rate limit that outlasts the wait budget refuses instead of sleeping", async () => {
+  const directory = await home();
+  const server = fixture({
+    once: {
+      "POST /v1/machine-enrollments": [
+        () => apiError(429, "RATE_LIMITED", { "retry-after": "60" }),
+      ],
+    },
+  });
+  const timing = fakeClock();
+  const result = await init({
+    home: directory,
+    fixture: server,
+    clock: timing.clock,
+    args: ["--wait-ms", "10000"],
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "RATE_LIMITED");
+  assert.equal(
+    result.envelope.error.kind,
+    "cli",
+    "The refusal is the CLI's own, not a relayed server rejection",
+  );
+  assert.equal(result.envelope.error.retryable, true);
+  assert(result.envelope.error.fields.includes("wait-ms"));
+  assert(result.envelope.error.nextActions.includes("run_init_again"));
+  assert.deepEqual(timing.waits, []);
+});
+
+test("a management 429 uses its fixed delay at most twice", async () => {
+  const directory = await home();
+  const server = fixture({
+    once: {
+      "GET /v1/tenants": Array.from(
+        { length: 6 },
+        () => () => apiError(429, "RATE_LIMITED"),
+      ),
+    },
+  });
+  const timing = fakeClock();
+  const result = await init({
+    home: directory,
+    fixture: server,
+    clock: timing.clock,
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "RATE_LIMITED");
+  assert.equal(
+    server.sent("GET", "/v1/tenants").length,
+    3,
+    "An unprojected delay is retried twice, never five times",
+  );
+  assert.deepEqual(timing.waits, [3000, 3000]);
+});
+
+test("a home directory other accounts can reach is refused, not tightened", async () => {
+  const directory = await home();
+  await chmod(directory, 0o755);
+  const server = fixture();
+  const result = await init({ home: directory, fixture: server });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "STATE_INSECURE");
+  assert.equal(server.requests.length, 0);
+  assert.equal(
+    (await stat(directory)).mode & 0o777,
+    0o755,
+    "A directory the caller already owned is never silently re-permissioned",
+  );
+});
+
+test("a state file inside a world-writable directory is refused", async () => {
+  const directory = await home();
+  await init({ home: directory, fixture: fixture() });
+  await chmod(directory, 0o707);
+  const server = fixture({ trafficEnabled: [true] });
+  const result = await init({ home: directory, fixture: server });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "STATE_INSECURE");
+  assert.equal(server.requests.length, 0);
+});
+
+test("a symlinked state file is refused", async () => {
+  const elsewhere = await home();
+  await init({ home: elsewhere, fixture: fixture() });
+  const directory = await home();
+  await symlink(
+    join(elsewhere, "credentials.json"),
+    join(directory, "credentials.json"),
+  );
+  const server = fixture({ trafficEnabled: [true] });
+  const result = await init({ home: directory, fixture: server });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "STATE_INSECURE");
+  assert.equal(
+    server.requests.length,
+    0,
+    "A credential is never read through a symbolic link",
+  );
+});
+
+test("init's help contract lists every option it accepts", async () => {
+  const lines: string[] = [];
+  const exitCode = await runCli(["init", "--help"], {
+    env: {},
+    stdin: Readable.from([]),
+    write: (line) => lines.push(line),
+  });
+  assert.equal(exitCode, 0);
+  const envelope = JSON.parse(lines[0]!);
+  const entry = envelope.data.commands[0];
+  assert.equal(entry.name, "init");
+  for (const flag of [
+    "base-url",
+    "json",
+    "origin",
+    "onboarding-url",
+    "gateway-url",
+    "wait-ms",
+    "reveal-key",
+  ]) {
+    assert(entry.optional.includes(flag), flag);
+  }
 });
 
 /** Write a state file directly to exercise resume paths that need a history. */

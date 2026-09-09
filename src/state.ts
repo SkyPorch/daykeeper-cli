@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, mkdir, open, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CliError } from "./errors.ts";
 
 /** Only `init` persists state; every other command stays stateless. */
@@ -12,6 +12,9 @@ export const MCP_FILE = "mcp.json";
 export const DIRECTORY_MODE = 0o700;
 export const FILE_MODE = 0o600;
 const MAX_STATE_BYTES = 64 * 1024;
+/** Windows has no `O_NOFOLLOW`; there the flag is simply not requested. */
+const NO_FOLLOW =
+  typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
 
 /** The private key is unrecoverable by design, so the file says so. */
 export const STATE_WARNING =
@@ -44,6 +47,11 @@ export interface InboxState {
   tenantId: string | null;
   name: string | null;
   slug: string | null;
+  /** How many slugs the server has already refused, so a rerun never repeats one. */
+  slugAttempt: number | null;
+  /** The recorded plan an interrupted apply replays, rather than a second plan. */
+  planId: string | null;
+  planVersion: number | null;
   applyIdempotencyKey: string | null;
   operationId: string | null;
   activationIntent: string | null;
@@ -80,14 +88,25 @@ export function resolveHome(
 /**
  * Read the state file. A missing file is a first run, not an error. A file that
  * any other account can read is refused rather than used: the credential and the
- * owner key inside it would already be compromised.
+ * owner key inside it would already be compromised. The open refuses a symbolic
+ * link, so the path cannot be aimed at a file this account did not write.
  */
 export async function readState(path: string): Promise<InitState | undefined> {
   let handle;
   try {
-    handle = await open(path, constants.O_RDONLY);
+    handle = await open(path, constants.O_RDONLY | NO_FOLLOW);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT") return undefined;
+    if (code === "ELOOP") {
+      throw new CliError(
+        "STATE_INSECURE",
+        "The Daykeeper state path is a symbolic link. Replace it with a regular 0600 file and run init again.",
+        ["home"],
+        false,
+        ["run_init_again"],
+      );
+    }
     throw new CliError(
       "STATE_UNREADABLE",
       "The Daykeeper state file could not be opened. No path was logged.",
@@ -97,6 +116,7 @@ export async function readState(path: string): Promise<InitState | undefined> {
     );
   }
   try {
+    await assertPrivateParent(path);
     const status = await handle.stat();
     if (!status.isFile()) {
       throw new CliError(
@@ -167,8 +187,15 @@ export async function writeSecureFile(
 ): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
-    await mkdir(directory, { recursive: true, mode: DIRECTORY_MODE });
-    await chmod(directory, DIRECTORY_MODE);
+    // A directory this command created is tightened to 0700. A directory the
+    // caller supplied is inspected, never silently re-permissioned: `--home`
+    // may be a path whose mode someone else deliberately set.
+    const created = await mkdir(directory, {
+      recursive: true,
+      mode: DIRECTORY_MODE,
+    });
+    if (created === undefined) await assertPrivateDirectory(directory);
+    else await chmod(directory, DIRECTORY_MODE);
     const handle = await open(
       temporary,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
@@ -189,6 +216,37 @@ export async function writeSecureFile(
       "STATE_UNREADABLE",
       "The Daykeeper state directory could not be written. No path was logged.",
       ["home"],
+    );
+  }
+}
+
+/** A pre-existing home must already be private before a credential enters it. */
+async function assertPrivateDirectory(directory: string): Promise<void> {
+  const status = await stat(directory);
+  if ((status.mode & 0o077) !== 0) {
+    throw new CliError(
+      "STATE_INSECURE",
+      "The Daykeeper home directory is accessible to other accounts. Restore mode 0700 and run init again.",
+      ["home"],
+      false,
+      ["run_init_again"],
+    );
+  }
+}
+
+/**
+ * A directory another account can write to lets that account replace the state
+ * file wholesale, so the file's own 0600 mode proves nothing.
+ */
+async function assertPrivateParent(path: string): Promise<void> {
+  const status = await stat(dirname(path));
+  if ((status.mode & 0o022) !== 0) {
+    throw new CliError(
+      "STATE_INSECURE",
+      "The directory holding the Daykeeper state file is writable by other accounts. Restore mode 0700 and run init again.",
+      ["home"],
+      false,
+      ["run_init_again"],
     );
   }
 }

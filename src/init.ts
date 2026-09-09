@@ -41,6 +41,8 @@ const MAX_WAIT_MS = 900000;
 const DEFAULT_RETRY_AFTER_MS = 3000;
 const MAX_RETRY_AFTER_MS = 60000;
 const MAX_RATE_LIMIT_RETRIES = 5;
+/** A delay the server never stated is a guess, so it is retried far less. */
+const MAX_FIXED_RATE_LIMIT_RETRIES = 2;
 const MAX_SLUG_ATTEMPTS = 10;
 const MAX_ROTATION_ATTEMPTS = 3;
 const CREDENTIAL_REFRESH_MS = 24 * 60 * 60 * 1000;
@@ -159,6 +161,10 @@ async function execute(
 
   progress.setStep("state");
   const stored = await readState(statePath);
+  // A stored credential belongs to the origin that issued it. Refusing the
+  // mismatch here, before a client exists, is what keeps the token from ever
+  // being offered to a different host.
+  if (stored) assertPinnedOrigin(stored, args);
   const state: InitState = {
     ...stored,
     version: STATE_VERSION,
@@ -185,22 +191,54 @@ async function execute(
   const guard = () => {
     if (signal.aborted) throw signal.reason;
   };
-  /** One bounded rate-limit wait, never past the wait budget. */
+  /**
+   * One bounded rate-limit wait, never past the wait budget. A delay the server
+   * did not project is a guess, so it is retried at most twice.
+   */
   const request = async <Value>(send: () => Promise<Value>): Promise<Value> => {
+    let guessed = 0;
     for (let attempt = 0; ; attempt += 1) {
       guard();
       try {
         return await send();
       } catch (error) {
-        const delay = rateLimitDelay(error);
+        const limit = rateLimitDelay(error);
+        if (limit === undefined) throw error;
+        if (!limit.projected) guessed += 1;
         if (
-          delay === undefined ||
           attempt >= MAX_RATE_LIMIT_RETRIES ||
-          clock.now() + delay > budget
+          guessed > MAX_FIXED_RATE_LIMIT_RETRIES ||
+          clock.now() + limit.delayMs > budget
         ) {
           throw error;
         }
-        await clock.sleep(delay, signal);
+        await clock.sleep(limit.delayMs, signal);
+      }
+    }
+  };
+  /**
+   * A challenge-bound mutation cannot be replayed after a 429: the proof is
+   * single-use and expires in a minute, so resending it would fail as an
+   * invalid challenge. Wait out the delay, then challenge and sign again. A
+   * delay that would outlast the run's budget refuses instead of sleeping.
+   */
+  const challenged = async <Value>(
+    send: () => Promise<Value>,
+  ): Promise<Value> => {
+    for (let attempt = 0; ; attempt += 1) {
+      guard();
+      try {
+        return await send();
+      } catch (error) {
+        const limit = rateLimitDelay(error);
+        if (limit === undefined) throw error;
+        if (
+          attempt >= MAX_RATE_LIMIT_RETRIES ||
+          clock.now() + limit.delayMs > budget
+        ) {
+          throw rateLimited();
+        }
+        await clock.sleep(limit.delayMs, signal);
       }
     }
   };
@@ -266,18 +304,21 @@ async function execute(
       idempotencyKey: intent.idempotencyKey,
     };
     await save();
-    const challenge = await request(() =>
-      onboarding.enrollments.challenge(intent),
-    );
-    const proof = await sign(() =>
-      signer.signEnrollment(challenge, intent, { audience: enrollAudience }),
-    );
-    const result = await request(() =>
-      onboarding.enrollments.create({
+    const result = await challenged(async () => {
+      const challenge = await request(() =>
+        onboarding.enrollments.challenge(intent),
+      );
+      const proof = await sign(() =>
+        signer.signEnrollment(challenge, intent, { audience: enrollAudience }),
+      );
+      return onboarding.enrollments.create({
         challengeId: challenge.challengeId,
         proof,
-      }),
-    );
+      });
+    });
+    // Redaction starts the instant the credential arrives, not once it is
+    // stored: an error rendered in between must not be able to print it.
+    if (result.token) context.addSecret(result.token);
     state.workspace = {
       ownerId: result.ownerId,
       organizationId: result.organizationId,
@@ -331,6 +372,9 @@ async function execute(
       tenantId: null,
       name: null,
       slug: null,
+      slugAttempt: null,
+      planId: null,
+      planVersion: null,
       applyIdempotencyKey: null,
       operationId: null,
       activationIntent: null,
@@ -354,41 +398,61 @@ async function execute(
       const base = deriveSlug(args.slug ?? args.name);
       let slug = inbox().slug ?? base;
       let applyKey = inbox().applyIdempotencyKey ?? generateIdempotencyKey();
-      for (let attempt = 0; ; attempt += 1) {
+      // The suffix counter is persisted with the slug, so a conflict followed
+      // by a crash resumes at the next unused suffix instead of resending the
+      // slug the server already refused.
+      let attempt = inbox().slugAttempt ?? 0;
+      for (;;) {
         inbox().name = args.name;
         inbox().slug = slug;
+        inbox().slugAttempt = attempt;
         inbox().applyIdempotencyKey = applyKey;
         await save();
-        try {
-          const plan = await request(() =>
-            client.tenants.plan({
-              name: args.name,
-              slug,
-              locale: args.locale,
-              inbox: { type: "api" },
-            }),
-          );
-          const applied = await request(() =>
-            client.tenants.apply(
-              { planId: plan.id, planVersion: plan.version },
-              { idempotencyKey: applyKey },
-            ),
-          );
-          inbox().tenantId = applied.tenant.id;
-          inbox().operationId = applied.operation.id;
-          await save();
-          ran("inbox_apply");
-          break;
-        } catch (error) {
-          if (
-            !isApiCode(error, "RESOURCE_CONFLICT") ||
-            attempt + 1 >= MAX_SLUG_ATTEMPTS
-          ) {
-            throw error;
+        let planId = inbox().planId ?? null;
+        let planVersion = inbox().planVersion ?? null;
+        if (planId === null || planVersion === null) {
+          // Only a plan may answer that a slug is taken, and only a plan may be
+          // replaced by a suffixed one. An apply failure propagates instead, so
+          // its stored idempotency key is replayed rather than abandoned.
+          try {
+            const plan = await request(() =>
+              client.tenants.plan({
+                name: args.name,
+                slug,
+                locale: args.locale,
+                inbox: { type: "api" },
+              }),
+            );
+            planId = plan.id;
+            planVersion = plan.version;
+          } catch (error) {
+            const next = attempt + 1;
+            if (
+              !isApiCode(error, "RESOURCE_CONFLICT") ||
+              next >= MAX_SLUG_ATTEMPTS
+            ) {
+              throw error;
+            }
+            attempt = next;
+            slug = suffixSlug(base, attempt + 1);
+            applyKey = generateIdempotencyKey();
+            continue;
           }
-          slug = suffixSlug(base, attempt + 2);
-          applyKey = generateIdempotencyKey();
+          inbox().planId = planId;
+          inbox().planVersion = planVersion;
+          await save();
         }
+        const applied = await request(() =>
+          client.tenants.apply(
+            { planId, planVersion },
+            { idempotencyKey: applyKey },
+          ),
+        );
+        inbox().tenantId = applied.tenant.id;
+        inbox().operationId = applied.operation.id;
+        await save();
+        ran("inbox_apply");
+        break;
       }
     }
   }
@@ -543,18 +607,20 @@ async function execute(
       };
       let result;
       try {
-        const challenge = await request(() =>
-          onboarding.credentialRotations.challenge(input),
-        );
-        const proof = await sign(() =>
-          signer.signRotation(challenge, input, { audience: rotationAudience }),
-        );
-        result = await request(() =>
-          onboarding.credentialRotations.create({
+        result = await challenged(async () => {
+          const challenge = await request(() =>
+            onboarding.credentialRotations.challenge(input),
+          );
+          const proof = await sign(() =>
+            signer.signRotation(challenge, input, {
+              audience: rotationAudience,
+            }),
+          );
+          return onboarding.credentialRotations.create({
             challengeId: challenge.challengeId,
             proof,
-          }),
-        );
+          });
+        });
       } catch (error) {
         if (
           attempt < MAX_ROTATION_ATTEMPTS &&
@@ -565,6 +631,8 @@ async function execute(
         }
         throw error;
       }
+      // As with enrollment, the credential is redacted the moment it arrives.
+      if (result.token) context.addSecret(result.token);
       if (result.token === null) {
         if (attempt >= MAX_ROTATION_ATTEMPTS) {
           throw new CliError(
@@ -599,18 +667,58 @@ async function execute(
       expectedCredentialId: probe,
       intentId: randomUUID(),
     };
-    const challenge = await request(() =>
-      onboarding.credentialRotations.challenge(input),
-    );
-    const proof = await sign(() =>
-      signer.signRotation(challenge, input, { audience: rotationAudience }),
-    );
-    return request(() =>
-      onboarding.credentialRotations.current({
+    return challenged(async () => {
+      const challenge = await request(() =>
+        onboarding.credentialRotations.challenge(input),
+      );
+      const proof = await sign(() =>
+        signer.signRotation(challenge, input, { audience: rotationAudience }),
+      );
+      return onboarding.credentialRotations.current({
         challengeId: challenge.challengeId,
         proof,
-      }),
-    );
+      });
+    });
+  }
+}
+
+const PINNED_ORIGINS = [
+  ["origin", "origin"],
+  ["onboardingUrl", "onboarding-url"],
+  ["apiUrl", "base-url"],
+  ["gatewayUrl", "gateway-url"],
+] as const;
+
+/**
+ * The state file records the origins its credential was minted against. A run
+ * that resolves different ones is refused rather than resumed: no stored token
+ * is ever sent to a host that did not issue it. Only hostnames are reported,
+ * never the configured URLs.
+ */
+function assertPinnedOrigin(stored: InitState, args: InitArguments): void {
+  const differing = PINNED_ORIGINS.filter(([key]) => stored[key] !== args[key]);
+  if (differing.length === 0) return;
+  const [key] = differing[0]!;
+  throw new CliError(
+    "STATE_ORIGIN_MISMATCH",
+    "The stored Daykeeper credential was issued for a different origin. No request was sent. Point --home at a separate directory for this origin, or remove the state file.",
+    differing.map(([, field]) => field),
+    false,
+    [],
+    {
+      ...host("storedHost", stored[key]),
+      ...host("requestedHost", args[key]),
+    },
+  );
+}
+
+function host(label: string, value: unknown): Record<string, string> {
+  if (typeof value !== "string") return {};
+  try {
+    const { host: name } = new URL(value);
+    return name ? { [label]: name } : {};
+  } catch {
+    return {};
   }
 }
 
@@ -645,17 +753,36 @@ function needsRotation(
   return !Number.isFinite(expiry) || expiry - now <= CREDENTIAL_REFRESH_MS;
 }
 
-function rateLimitDelay(error: unknown): number | undefined {
+interface RateLimit {
+  delayMs: number;
+  /** True when the server itself stated the delay through `Retry-After`. */
+  projected: boolean;
+}
+
+function rateLimitDelay(error: unknown): RateLimit | undefined {
   if (error instanceof DaykeeperOnboardingApiError && error.status === 429) {
     const seconds = error.retryAfterSeconds;
     const requested =
       seconds === undefined ? DEFAULT_RETRY_AFTER_MS : seconds * 1000;
-    return Math.min(Math.max(requested, 0), MAX_RETRY_AFTER_MS);
+    return {
+      delayMs: Math.min(Math.max(requested, 0), MAX_RETRY_AFTER_MS),
+      projected: seconds !== undefined,
+    };
   }
   // The management SDK does not project Retry-After, so a fixed delay is used.
   if (error instanceof DaykeeperApiError && error.status === 429)
-    return DEFAULT_RETRY_AFTER_MS;
+    return { delayMs: DEFAULT_RETRY_AFTER_MS, projected: false };
   return undefined;
+}
+
+function rateLimited(): CliError {
+  return new CliError(
+    "RATE_LIMITED",
+    "Daykeeper rate-limited the request and the wait would outlast this run's budget. Run init again to resume.",
+    ["wait-ms"],
+    true,
+    ["run_init_again"],
+  );
 }
 
 function isApiCode(error: unknown, code: string): boolean {
