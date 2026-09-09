@@ -205,10 +205,11 @@ const cases = [
   },
   {
     command: "flows create",
-    flags: ["--tenant-id", TENANT, "--input", "-"],
+    flags: ["--tenant-id", TENANT, "--input", "-", "--idempotency-key", KEY],
     method: "POST",
     path: `/v1/tenants/${TENANT}/flows`,
     input: flow,
+    key: KEY,
   },
   {
     command: "flows versions get",
@@ -218,10 +219,11 @@ const cases = [
   },
   {
     command: "flows versions create",
-    flags: ["--flow-id", FLOW, "--input", "-"],
+    flags: ["--flow-id", FLOW, "--input", "-", "--idempotency-key", KEY],
     method: "POST",
     path: `/v1/flows/${FLOW}/versions`,
     input: flowVersion,
+    key: KEY,
   },
   {
     command: "flows versions publish",
@@ -232,10 +234,13 @@ const cases = [
       "2",
       "--expected-resource-version",
       "7",
+      "--idempotency-key",
+      KEY,
     ],
     method: "POST",
     path: `/v1/flows/${FLOW}/versions/2/publish`,
     body: { expectedResourceVersion: 7 },
+    key: KEY,
   },
 ];
 
@@ -377,6 +382,8 @@ const invalidArguments = [
     `${KEY}\ninjected`,
   ],
   ["flows", "versions", "publish", "--flow-id", FLOW, "--version", "1"],
+  ["flows", "create", "--tenant-id", TENANT, "--input", "-"],
+  ["flows", "versions", "create", "--flow-id", FLOW, "--input", "-"],
   ["flows", "versions", "get", "--flow-id", FLOW, "--version", "1.5"],
   ["capabilities", "--timeout-ms", "999"],
   ["capabilities", "--timeout-ms", "60001"],
@@ -445,7 +452,16 @@ test("strict input schemas reject organization overrides and unknown action capa
     [],
   ]) {
     const result = await invoke(
-      ["flows", "create", "--tenant-id", TENANT, "--input", "-"],
+      [
+        "flows",
+        "create",
+        "--tenant-id",
+        TENANT,
+        "--input",
+        "-",
+        "--idempotency-key",
+        KEY,
+      ],
       {
         input: JSON.stringify({
           ...flow,
@@ -835,7 +851,7 @@ test("manifest pins the inspected public SDK without private or local dependenci
   );
   assert.equal(manifest.version, CLI_VERSION);
   assert.equal(manifest.dependencies["@skyporch/daykeeper"], SDK_VERSION);
-  assert.equal(SDK_VERSION, "0.1.0");
+  assert.equal(SDK_VERSION, "0.2.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(
     manifest.private,

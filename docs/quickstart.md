@@ -69,5 +69,6 @@ automatically.
 ## Flow mutations
 
 Management contract `0.2.0` requires an `Idempotency-Key` header on flow
-mutations. Pass the key explicitly on `flows create`, `flows versions create`,
-and `flows versions publish`; see `COMMANDS.md`.
+mutations, and SDK `0.2.0` enforces it before a request is sent. Pass
+`--idempotency-key` explicitly on `flows create`, `flows versions create`, and
+`flows versions publish`; see `COMMANDS.md`.

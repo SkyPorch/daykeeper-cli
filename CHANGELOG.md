@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Breaking
+
+- Pin the published `@skyporch/daykeeper` SDK `0.2.0` in place of `0.1.0`. That
+  SDK makes `idempotencyKey` mandatory on `flows.create`, `flows.createVersion`,
+  and `flows.publishVersion`, so `--idempotency-key` is now a required flag on
+  `flows create`, `flows versions create`, and `flows versions publish`. The CLI
+  still never generates a key for the caller. Every other command is unchanged.
+
 ## 0.1.0 — unreleased foundation
 
 The CLI stays at `0.1.0` and `private: true`. Nothing has been published for

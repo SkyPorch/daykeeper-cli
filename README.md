@@ -1,7 +1,7 @@
 # Daykeeper CLI
 
 A command line for people, agents, and CI jobs managing Daykeeper. It calls the
-published `@skyporch/daykeeper@0.1.0` SDK and returns one versioned JSON envelope
+published `@skyporch/daykeeper@0.2.0` SDK and returns one versioned JSON envelope
 per invocation. It does not depend on a private application or workspace package.
 
 This is an **unpublished foundation** for `@skyporch/daykeeper-cli`. The package
@@ -94,9 +94,9 @@ Use `--timeout-ms` or `DAYKEEPER_TIMEOUT_MS` to set one 1–60 second budget for
 input reading and the API request (default: 30 seconds). Cancellation aborts the
 local request, not work already accepted by the server. An interrupted mutation
 reports `mutationOutcome: "unknown"`; inspect the relevant resource or operation
-before retrying. For plan/apply, reuse the original idempotency key for the exact
-same logical action. Flow mutations and operation retries have no idempotency
-key in SDK `0.1.0`; they are never replayed automatically.
+before retrying. For plan/apply and flow mutations, reuse the original idempotency
+key for the exact same logical action. Operation retries have no idempotency key
+in SDK `0.2.0`; they are never replayed automatically.
 
 API failures retain their bounded error code, status, retryability, safe field
 names, next actions, and correlation ID. Raw remote messages, request bodies,

@@ -50,7 +50,7 @@ export async function verifyExecutable(bin) {
   assert.equal(help.exitCode, 0);
   assert.equal(help.envelope.data.commands.length, 16);
   const version = await call(bin, ["--version"]);
-  assert.equal(version.envelope.data.sdkVersion, "0.1.0");
+  assert.equal(version.envelope.data.sdkVersion, "0.2.0");
   const missingAuth = await call(bin, ["capabilities"], {
     DAYKEEPER_API_URL: "https://example.test",
   });

@@ -117,7 +117,7 @@ const commands: readonly Command[] = [
     name: "flows create",
     effect: "mutation",
     summary: "Create a draft flow; do not publish or execute it.",
-    required: ["tenant-id", "input"],
+    required: ["tenant-id", "input", "idempotency-key"],
     scopes: ["daykeeper.flows:write"],
     input: "flow",
   },
@@ -133,7 +133,7 @@ const commands: readonly Command[] = [
     effect: "mutation",
     summary:
       "Create a revision using the expected latest version in JSON input.",
-    required: ["flow-id", "input"],
+    required: ["flow-id", "input", "idempotency-key"],
     scopes: ["daykeeper.flows:write"],
     input: "flowVersion",
   },
@@ -142,7 +142,12 @@ const commands: readonly Command[] = [
     effect: "mutation",
     summary:
       "Publish an existing revision using an explicit expected resource version.",
-    required: ["flow-id", "version", "expected-resource-version"],
+    required: [
+      "flow-id",
+      "version",
+      "expected-resource-version",
+      "idempotency-key",
+    ],
     scopes: ["daykeeper.flows:publish"],
   },
 ];
@@ -320,7 +325,13 @@ export async function dispatch(
     case "flows get":
       return client.flows.get(option("flow-id"));
     case "flows create":
-      return client.flows.create(option("tenant-id"), input as CreateFlowInput);
+      return client.flows.create(
+        option("tenant-id"),
+        input as CreateFlowInput,
+        {
+          idempotencyKey: option("idempotency-key"),
+        },
+      );
     case "flows versions get":
       return client.flows.getVersion(
         option("flow-id"),
@@ -330,6 +341,7 @@ export async function dispatch(
       return client.flows.createVersion(
         option("flow-id"),
         input as CreateFlowVersionInput,
+        { idempotencyKey: option("idempotency-key") },
       );
     case "flows versions publish":
       return client.flows.publishVersion(
@@ -341,6 +353,7 @@ export async function dispatch(
             "expected-resource-version",
           ),
         },
+        { idempotencyKey: option("idempotency-key") },
       );
     default:
       throw new CliError(

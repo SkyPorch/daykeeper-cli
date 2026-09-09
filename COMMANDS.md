@@ -1,7 +1,7 @@
 # Daykeeper CLI command contract
 
 Envelope version: `daykeeper.cli.v1`. CLI foundation: `0.1.0`. Runtime management
-SDK: the published `@skyporch/daykeeper@0.1.0`.
+SDK: the published `@skyporch/daykeeper@0.2.0`.
 
 ## Commands
 
@@ -9,24 +9,24 @@ Every network command requires an explicit API base URL and one scoped access
 token. Each invocation calls exactly one SDK method. Scope names below are
 required by the API, not permissions granted by a CLI option.
 
-| Command                  | Required flags                                          | Optional flags | API scope                      | Effect                                        |
-| ------------------------ | ------------------------------------------------------- | -------------- | ------------------------------ | --------------------------------------------- |
-| `capabilities`           | —                                                       | —              | `daykeeper.accounts:read`      | Read server capabilities                      |
-| `tenants list`           | —                                                       | —              | `daykeeper.accounts:read`      | Read visible tenants                          |
-| `tenants get`            | `--tenant-id`                                           | —              | `daykeeper.accounts:read`      | Read one tenant                               |
-| `tenants plan`           | `--input`                                               | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
-| `tenants apply`          | `--plan-id`, `--plan-version`, `--idempotency-key`      | —              | `daykeeper.provisioning:apply` | Apply the exact tenant plan                   |
-| `email-channels get`     | `--tenant-id`                                           | —              | `daykeeper.accounts:read`      | Read channel and DNS status                   |
-| `email-channels plan`    | `--tenant-id`, `--input`                                | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
-| `email-channels apply`   | `--plan-id`, `--plan-version`, `--idempotency-key`      | —              | `daykeeper.provisioning:apply` | Apply the exact channel plan                  |
-| `operations get`         | `--operation-id`                                        | —              | `daykeeper.provisioning:read`  | Read operation state                          |
-| `operations retry`       | `--operation-id`                                        | —              | `daykeeper.provisioning:apply` | Request one retry explicitly                  |
-| `flows list`             | —                                                       | `--tenant-id`  | `daykeeper.flows:read`         | Read visible flows                            |
-| `flows get`              | `--flow-id`                                             | —              | `daykeeper.flows:read`         | Read flow and latest version                  |
-| `flows create`           | `--tenant-id`, `--input`                                | —              | `daykeeper.flows:write`        | Create a draft, not a publication             |
-| `flows versions get`     | `--flow-id`, `--version`                                | —              | `daykeeper.flows:read`         | Read exact immutable revision                 |
-| `flows versions create`  | `--flow-id`, `--input`                                  | —              | `daykeeper.flows:write`        | Create a revision with optimistic concurrency |
-| `flows versions publish` | `--flow-id`, `--version`, `--expected-resource-version` | —              | `daykeeper.flows:publish`      | Publish an existing revision                  |
+| Command                  | Required flags                                                               | Optional flags | API scope                      | Effect                                        |
+| ------------------------ | ---------------------------------------------------------------------------- | -------------- | ------------------------------ | --------------------------------------------- |
+| `capabilities`           | —                                                                            | —              | `daykeeper.accounts:read`      | Read server capabilities                      |
+| `tenants list`           | —                                                                            | —              | `daykeeper.accounts:read`      | Read visible tenants                          |
+| `tenants get`            | `--tenant-id`                                                                | —              | `daykeeper.accounts:read`      | Read one tenant                               |
+| `tenants plan`           | `--input`                                                                    | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
+| `tenants apply`          | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —              | `daykeeper.provisioning:apply` | Apply the exact tenant plan                   |
+| `email-channels get`     | `--tenant-id`                                                                | —              | `daykeeper.accounts:read`      | Read channel and DNS status                   |
+| `email-channels plan`    | `--tenant-id`, `--input`                                                     | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
+| `email-channels apply`   | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —              | `daykeeper.provisioning:apply` | Apply the exact channel plan                  |
+| `operations get`         | `--operation-id`                                                             | —              | `daykeeper.provisioning:read`  | Read operation state                          |
+| `operations retry`       | `--operation-id`                                                             | —              | `daykeeper.provisioning:apply` | Request one retry explicitly                  |
+| `flows list`             | —                                                                            | `--tenant-id`  | `daykeeper.flows:read`         | Read visible flows                            |
+| `flows get`              | `--flow-id`                                                                  | —              | `daykeeper.flows:read`         | Read flow and latest version                  |
+| `flows create`           | `--tenant-id`, `--input`, `--idempotency-key`                                | —              | `daykeeper.flows:write`        | Create a draft, not a publication             |
+| `flows versions get`     | `--flow-id`, `--version`                                                     | —              | `daykeeper.flows:read`         | Read exact immutable revision                 |
+| `flows versions create`  | `--flow-id`, `--input`, `--idempotency-key`                                  | —              | `daykeeper.flows:write`        | Create a revision with optimistic concurrency |
+| `flows versions publish` | `--flow-id`, `--version`, `--expected-resource-version`, `--idempotency-key` | —              | `daykeeper.flows:publish`      | Publish an existing revision                  |
 
 Identifiers must be UUIDs. Version flags must be positive safe integers.
 Idempotency keys must contain 16–128 ASCII letters, digits, periods, underscores,
@@ -157,8 +157,8 @@ its result was lost to transport failure, timeout, cancellation, or a server-sid
 work, and does not establish that a mutation is safe to repeat.
 
 `retryable` describes the reported failure, not permission to repeat a mutation.
-No command retries automatically, including on `401`, `429`, or `5xx`. The
-published SDK does not expose `Retry-After` through its error object; this CLI
-does not invent a retry delay. Use plan/apply idempotency or inspect resource
+No command other than `init` retries automatically, including on `401`, `429`, or
+`5xx`. The published management SDK does not expose `Retry-After` through its
+error object; this CLI does not invent a retry delay outside `init`. Use plan/apply idempotency or inspect resource
 state before explicitly trying again. For automation, rely on `code`, `status`,
 and `nextActions`, not human-readable message text.

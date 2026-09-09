@@ -25,18 +25,18 @@ later), Resend (predictable commands, structured output).
 `init` is the only command that persists state. Every other command stays
 stateless as documented in `COMMANDS.md`; that rule is revised, not removed.
 
-| Flag | Required | Meaning |
-| --- | --- | --- |
-| `--name <text>` | yes | Workspace and inbox name, 2 to 120 characters after trimming. |
-| `--plan free` | no | Only `free` is accepted today. Anything else is `INVALID_ARGUMENT`. The value is validated, never sent: enrollment always creates the Free entitlement. |
-| `--origin <https url>` | no | Canonical HTTPS origin that serves both onboarding and the management API. Default: `DAYKEEPER_ORIGIN`, then the built-in hosted origin. |
-| `--onboarding-url`, `--base-url`, `--gateway-url` | no | Per-service overrides. Env: `DAYKEEPER_ONBOARDING_URL`, `DAYKEEPER_API_URL`, `DAYKEEPER_GATEWAY_URL`. |
-| `--slug <slug>` | no | Inbox slug. Default: slugified `--name`, truncated to 63, fallback `inbox`. |
-| `--locale <tag>` | no | Default `en`. |
-| `--home <dir>` | no | Where state lives. Default: `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`. |
-| `--wait-ms <n>` | no | Provisioning wait budget, 10000 to 900000. Default 300000. |
-| `--reveal-key` | no | Include the literal server key in the JSON output. Off by default; see Secrets. |
-| `--json` | no | Accepted for symmetry with the documented command. Output is always JSON. |
+| Flag                                              | Required | Meaning                                                                                                                                                 |
+| ------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--name <text>`                                   | yes      | Workspace and inbox name, 2 to 120 characters after trimming.                                                                                           |
+| `--plan free`                                     | no       | Only `free` is accepted today. Anything else is `INVALID_ARGUMENT`. The value is validated, never sent: enrollment always creates the Free entitlement. |
+| `--origin <https url>`                            | no       | Canonical HTTPS origin that serves both onboarding and the management API. Default: `DAYKEEPER_ORIGIN`, then the built-in hosted origin.                |
+| `--onboarding-url`, `--base-url`, `--gateway-url` | no       | Per-service overrides. Env: `DAYKEEPER_ONBOARDING_URL`, `DAYKEEPER_API_URL`, `DAYKEEPER_GATEWAY_URL`.                                                   |
+| `--slug <slug>`                                   | no       | Inbox slug. Default: slugified `--name`, truncated to 63, fallback `inbox`.                                                                             |
+| `--locale <tag>`                                  | no       | Default `en`.                                                                                                                                           |
+| `--home <dir>`                                    | no       | Where state lives. Default: `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`.                                            |
+| `--wait-ms <n>`                                   | no       | Provisioning wait budget, 10000 to 900000. Default 300000.                                                                                              |
+| `--reveal-key`                                    | no       | Include the literal server key in the JSON output. Off by default; see Secrets.                                                                         |
+| `--json`                                          | no       | Accepted for symmetry with the documented command. Output is always JSON.                                                                               |
 
 Global `--timeout-ms` applies per request. `--token-stdin` and
 `DAYKEEPER_ACCESS_TOKEN` are rejected with `INVALID_ARGUMENT`: `init` creates
@@ -113,9 +113,24 @@ world access.
   "gatewayUrl": "https://…",
   "owner": { "privateJwk": { "kty": "EC", "crv": "P-256", "…": "…" } },
   "enrollment": { "name": "Acme Support", "idempotencyKey": "…" },
-  "workspace": { "ownerId": "…", "organizationId": "…", "organizationSlug": "…" },
-  "credential": { "id": "…", "expiresAt": "…", "token": "dk_machine_…", "rotationIntentId": null },
-  "inbox": { "tenantId": "…", "slug": "acme-support", "applyIdempotencyKey": "…", "operationId": "…", "activationIntent": "…" },
+  "workspace": {
+    "ownerId": "…",
+    "organizationId": "…",
+    "organizationSlug": "…"
+  },
+  "credential": {
+    "id": "…",
+    "expiresAt": "…",
+    "token": "dk_machine_…",
+    "rotationIntentId": null
+  },
+  "inbox": {
+    "tenantId": "…",
+    "slug": "acme-support",
+    "applyIdempotencyKey": "…",
+    "operationId": "…",
+    "activationIntent": "…"
+  },
   "updatedAt": "…"
 }
 ```
@@ -129,13 +144,34 @@ Success envelope, `data` shape:
 
 ```json
 {
-  "workspace": { "organizationId": "…", "slug": "…", "name": "Acme Support", "plan": "free" },
-  "inbox": { "tenantId": "…", "slug": "acme-support", "name": "Acme Support", "state": "ready", "trafficEnabled": true },
-  "credential": { "id": "…", "expiresAt": "…", "storedAt": "/home/agent/.config/daykeeper/credentials.json" },
+  "workspace": {
+    "organizationId": "…",
+    "slug": "…",
+    "name": "Acme Support",
+    "plan": "free"
+  },
+  "inbox": {
+    "tenantId": "…",
+    "slug": "acme-support",
+    "name": "Acme Support",
+    "state": "ready",
+    "trafficEnabled": true
+  },
+  "credential": {
+    "id": "…",
+    "expiresAt": "…",
+    "storedAt": "/home/agent/.config/daykeeper/credentials.json"
+  },
   "endpoints": { "apiUrl": "https://…", "gatewayUrl": "https://…" },
   "sdk": {
-    "packages": { "backend": "@skyporch/daykeeper@0.2.0", "reactNative": "@skyporch/daykeeper-react-native@0.1.0" },
-    "env": { "DAYKEEPER_API_URL": "https://…", "DAYKEEPER_API_KEY": "<stored; rerun with --reveal-key>" }
+    "packages": {
+      "backend": "@skyporch/daykeeper@0.2.0",
+      "reactNative": "@skyporch/daykeeper-react-native@0.1.0"
+    },
+    "env": {
+      "DAYKEEPER_API_URL": "https://…",
+      "DAYKEEPER_API_KEY": "<stored; rerun with --reveal-key>"
+    }
   },
   "mcp": {
     "configPath": "/home/agent/.config/daykeeper/mcp.json",
@@ -156,7 +192,13 @@ Success envelope, `data` shape:
     }
   },
   "resumed": false,
-  "steps": ["owner_key", "enroll", "inbox_apply", "inbox_wait", "inbox_activate"]
+  "steps": [
+    "owner_key",
+    "enroll",
+    "inbox_apply",
+    "inbox_wait",
+    "inbox_activate"
+  ]
 }
 ```
 
