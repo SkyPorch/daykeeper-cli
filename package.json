@@ -1,7 +1,7 @@
 {
   "name": "@skyporch/daykeeper-cli",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "description": "Machine-readable command line for the Daykeeper management API",
   "type": "module",
   "sideEffects": false,

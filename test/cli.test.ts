@@ -857,8 +857,8 @@ test("manifest pins the inspected public SDK without private or local dependenci
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(
     manifest.private,
-    true,
-    "Bootstrap publishing remains blocked in this foundation",
+    false,
+    "The approved bootstrap release publishes this version",
   );
   for (const version of Object.values(manifest.dependencies))
     assert.match(String(version), /^\d+\.\d+\.\d+$/);

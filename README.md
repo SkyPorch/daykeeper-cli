@@ -37,8 +37,8 @@ identifiers with ready-to-paste SDK and MCP configuration. Run it again and it
 resumes from wherever it stopped; it never creates a second workspace,
 credential, or inbox.
 
-This repository has no built-in hostname, so supply `--origin` or set
-`DAYKEEPER_ORIGIN`; without one, `init` fails with `ORIGIN_REQUIRED`. The
+`init` talks to the hosted Daykeeper at `https://api.mydaykeeper.com` unless
+you pass `--origin` or set `DAYKEEPER_ORIGIN`. The
 credential is redacted from output unless you pass `--reveal-key`, but
 `<home>/mcp.json` always carries the literal credential so an MCP client can
 read it. `init` refuses `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN`, because it

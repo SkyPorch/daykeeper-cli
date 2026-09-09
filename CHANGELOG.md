@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0 (2026-09-09)
+
+First published release. Runtime SDK: `@skyporch/daykeeper@0.2.0`; management
+contract tag `v1.1.0`.
+
 ### Breaking
 
 - Pin the published `@skyporch/daykeeper` SDK `0.2.0` in place of `0.1.0`. That
@@ -27,9 +32,10 @@
   credential and must not run under someone else's. The credential is redacted
   from output unless `--reveal-key` is supplied, and the machine owner private
   key is redacted unconditionally.
-- The built-in hosted origin is a single empty constant in `src/constants.ts`.
-  There is no default hostname anywhere in the code, so `init` fails with
-  `ORIGIN_REQUIRED` until a release PR sets it.
+- `init` defaults to the hosted origins `https://api.mydaykeeper.com` (API and
+  machine onboarding) and `https://gateway.mydaykeeper.com` (customer gateway).
+  `--origin`, `--gateway-url`, and their environment variables override them; a
+  custom origin pairs with its own gateway, never the hosted one.
 - A stored `init` credential is pinned to the origins that issued it. A run that
   resolves a different origin fails with `STATE_ORIGIN_MISMATCH` before any
   request is sent, so the credential is never offered to another host.

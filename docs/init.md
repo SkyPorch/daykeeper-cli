@@ -42,9 +42,12 @@ Global `--timeout-ms` applies per request. `--token-stdin` and
 `DAYKEEPER_ACCESS_TOKEN` are rejected with `INVALID_ARGUMENT`: `init` creates
 its own credential and must not be run under someone else's.
 
-The built-in hosted origin is a single constant in `src/constants.ts`. In this
-repository it is empty, and `init` fails with `ORIGIN_REQUIRED` until the
-release PR sets it. No other default hostname exists anywhere in the code.
+The built-in hosted origins are two constants in `src/constants.ts`:
+`https://api.mydaykeeper.com` serves the management API and machine onboarding,
+and `https://gateway.mydaykeeper.com` serves customer SDK traffic. A custom
+`--origin` pairs with itself as the gateway unless `--gateway-url` is given.
+`ORIGIN_REQUIRED` remains only as a defensive error for a build with the
+constants blanked.
 
 ## The flow
 
@@ -278,7 +281,7 @@ credential rotates; slug conflict suffixes; provisioning failed, cancelled, and
 timeout; activation unavailable; 429 with `Retry-After`; `outcomeUnknown` on
 apply keeps the intent; token and private key never appear in output without
 `--reveal-key`; `--plan pro` rejected; `--token-stdin` rejected; insecure state
-file mode rejected; `ORIGIN_REQUIRED` when no origin is configured; a stored
+file mode rejected; the hosted API and gateway origins are used when none is configured; a stored
 credential refused for a second origin before any request; an apply conflict
 that neither suffixes the slug nor re-plans on the rerun; a slug conflict
 followed by a crash resuming at the next suffix; a credential echoed back by the

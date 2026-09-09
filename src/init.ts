@@ -12,6 +12,7 @@ import {
   type MachineRotationInput,
 } from "@skyporch/daykeeper";
 import {
+  HOSTED_GATEWAY_URL,
   HOSTED_ORIGIN,
   MCP_PACKAGE,
   REACT_NATIVE_PACKAGE,
@@ -861,7 +862,11 @@ function parseInitArguments(
     );
   }
 
-  const origin = text(options.origin) ?? env.DAYKEEPER_ORIGIN ?? HOSTED_ORIGIN;
+  const explicitOrigin = text(options.origin) ?? env.DAYKEEPER_ORIGIN;
+  const origin = explicitOrigin ?? HOSTED_ORIGIN;
+  // A custom origin serves its own gateway; only the hosted origin pairs with
+  // the hosted gateway.
+  const gatewayFallback = explicitOrigin ? origin : HOSTED_GATEWAY_URL;
   const services: [keyof InitArguments, string, string | undefined][] = [
     [
       "onboardingUrl",
@@ -876,7 +881,9 @@ function parseInitArguments(
     [
       "gatewayUrl",
       "gateway-url",
-      text(options["gateway-url"]) ?? env.DAYKEEPER_GATEWAY_URL ?? origin,
+      text(options["gateway-url"]) ??
+        env.DAYKEEPER_GATEWAY_URL ??
+        gatewayFallback,
     ],
   ];
   const resolved: Record<string, string> = {};

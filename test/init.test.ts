@@ -53,6 +53,8 @@ interface Recorded {
 }
 
 interface FixtureOptions {
+  /** Audience the enrollment challenge announces; defaults to the test origin. */
+  audience?: string;
   /** Consumed in order; a remaining value repeats. */
   operationStates?: string[];
   trafficEnabled?: boolean[];
@@ -137,7 +139,7 @@ function fixture(options: FixtureOptions = {}): Fixture {
       return Response.json(
         {
           challengeId: id,
-          audience: ENROLL_AUDIENCE,
+          audience: options.audience ?? ENROLL_AUDIENCE,
           nonce: base64url(randomBytes(32)),
           keyThumbprint: await thumbprint(),
           requestHash: hex(
@@ -959,9 +961,11 @@ async function runInvalidName(
   return { envelope: JSON.parse(lines[0]!) };
 }
 
-test("no origin anywhere is ORIGIN_REQUIRED, and no default hostname exists", async () => {
+test("no origin anywhere uses the hosted API and gateway origins", async () => {
   const directory = await home();
-  const server = fixture();
+  const server = fixture({
+    audience: "https://api.mydaykeeper.com/v1/machine-enrollments",
+  });
   const lines: string[] = [];
   const exitCode = await runCli(
     ["init", "--name", "Acme Support", "--home", directory],
@@ -973,11 +977,13 @@ test("no origin anywhere is ORIGIN_REQUIRED, and no default hostname exists", as
       clock: fakeClock().clock,
     },
   );
-  assert.equal(exitCode, 1);
   const envelope = JSON.parse(lines[0]!);
-  assert.equal(envelope.error.code, "ORIGIN_REQUIRED");
-  assert.deepEqual(envelope.error.nextActions, ["run_init_again"]);
-  assert.equal(server.requests.length, 0);
+  assert.equal(exitCode, 0, lines[0]);
+  assert.deepEqual(envelope.data.endpoints, {
+    apiUrl: "https://api.mydaykeeper.com",
+    gatewayUrl: "https://gateway.mydaykeeper.com",
+  });
+  assert(server.requests.length > 0);
 });
 
 test("an origin must be an HTTPS root without credentials, query, or path", async () => {
