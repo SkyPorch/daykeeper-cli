@@ -59,22 +59,22 @@ export async function verifyExecutable(bin) {
   assert.equal(missingAuth.exitCode, 1);
   assert.equal(missingAuth.envelope.error.code, "AUTH_REQUIRED");
 
-  // `init` ships with no default hostname, so the packaged executable refuses
-  // to run before an origin is configured, and it refuses a supplied token.
+  // `init` defaults to the hosted origin, so the smoke never runs it without
+  // an explicit origin: these refusals happen before any request and before
+  // any state is written, so nothing here can reach the network.
   const home = await mkdtemp(join(tmpdir(), "daykeeper-cli-smoke-home-"));
   try {
-    const missingOrigin = await call(bin, [
+    const badOrigin = await call(bin, [
       "init",
       "--name",
       "Smoke Test",
+      "--origin",
+      "https://example.test/not-an-origin",
       "--home",
       home,
     ]);
-    assert.equal(missingOrigin.exitCode, 1);
-    assert.equal(missingOrigin.envelope.error.code, "ORIGIN_REQUIRED");
-    assert.deepEqual(missingOrigin.envelope.error.nextActions, [
-      "run_init_again",
-    ]);
+    assert.equal(badOrigin.exitCode, 1);
+    assert.equal(badOrigin.envelope.error.code, "INVALID_CONFIGURATION");
     const suppliedToken = await call(
       bin,
       [

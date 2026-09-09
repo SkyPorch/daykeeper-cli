@@ -75,8 +75,10 @@ daykeeper init --name "Acme Support" --plan free --json
 rate-limit sleeps only, not the run's total duration and not any single request.
 `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN` are rejected with
 `INVALID_ARGUMENT`: `init` creates its own credential and must not run under
-someone else's. There is no built-in default hostname in this repository, so
-`init` fails with `ORIGIN_REQUIRED` until an origin is configured.
+someone else's. Without `--origin` or `DAYKEEPER_ORIGIN`, `init` uses the hosted
+`https://api.mydaykeeper.com` for the API and machine onboarding and
+`https://gateway.mydaykeeper.com` for the customer gateway. A custom origin
+pairs with itself as the gateway unless `--gateway-url` is given.
 
 ### State
 

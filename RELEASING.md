@@ -1,7 +1,8 @@
 # Releasing the Daykeeper CLI
 
-No CLI package has been published. Version `0.1.0` here is an unreleased
-foundation, and `private: true` deliberately prevents publication. Apache-2.0
+Version `0.1.0` is the first release candidate. `private` is `false` so the
+approved bootstrap publish can proceed; until an npm owner publishes it, no
+CLI package exists on npm. Apache-2.0
 is the approved license for this original code. This is not a license gate.
 
 ## Provenance status
