@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.0 (2026-09-10)
+
+Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.
+
 ### Added
 
 - Add `daykeeper claim --email <address>`. It hands the workspace `init` created
