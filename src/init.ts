@@ -1,25 +1,27 @@
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
-  DaykeeperApiError,
   DaykeeperClient,
   DaykeeperMachineSigner,
-  DaykeeperOnboardingApiError,
   DaykeeperOnboardingClient,
   generateIdempotencyKey,
   type InboxChannel,
   type MachineEnrollmentInput,
-  type MachineRotationInput,
 } from "@skyporch/daykeeper";
 import {
-  HOSTED_GATEWAY_URL,
-  HOSTED_ORIGIN,
   MCP_PACKAGE,
   REACT_NATIVE_PACKAGE,
   SDK_PACKAGE,
   SDK_VERSION,
 } from "./constants.ts";
+import {
+  isApiCode,
+  needsRotation,
+  retries,
+  rotateCredential,
+  type Clock,
+} from "./credential.ts";
 import { CliError } from "./errors.ts";
+import { assertPinnedOrigin, resolveOrigins, type Origins } from "./origins.ts";
 import {
   MCP_FILE,
   STATE_FILE,
@@ -29,7 +31,6 @@ import {
   resolveHome,
   writeSecureFile,
   writeState,
-  type CredentialState,
   type InboxState,
   type InitState,
 } from "./state.ts";
@@ -39,15 +40,7 @@ const POLL_INTERVAL_MS = 3000;
 const DEFAULT_WAIT_MS = 300000;
 const MIN_WAIT_MS = 10000;
 const MAX_WAIT_MS = 900000;
-const DEFAULT_RETRY_AFTER_MS = 3000;
-const MAX_RETRY_AFTER_MS = 60000;
-const MAX_RATE_LIMIT_RETRIES = 5;
-/** A delay the server never stated is a guess, so it is retried far less. */
-const MAX_FIXED_RATE_LIMIT_RETRIES = 2;
 const MAX_SLUG_ATTEMPTS = 10;
-const MAX_ROTATION_ATTEMPTS = 3;
-const CREDENTIAL_REFRESH_MS = 24 * 60 * 60 * 1000;
-const NIL_UUID = "00000000-0000-0000-0000-000000000000";
 const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export const INIT_STEPS = [
@@ -74,10 +67,8 @@ export class InitStepError extends Error {
   }
 }
 
-export interface InitClock {
-  now: () => number;
-  sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>;
-}
+/** Kept as the published name for the shared clock seam. */
+export type InitClock = Clock;
 
 export interface InitContext {
   options: Readonly<Record<string, string | boolean | undefined>>;
@@ -92,37 +83,15 @@ export interface InitContext {
   reveal: (secret: string) => string;
 }
 
-export const realClock: InitClock = {
-  now: () => Date.now(),
-  sleep: (milliseconds, signal) =>
-    new Promise((resolve, reject) => {
-      if (signal.aborted) {
-        reject(signal.reason);
-        return;
-      }
-      const timer = setTimeout(() => {
-        signal.removeEventListener("abort", abort);
-        resolve();
-      }, milliseconds);
-      function abort() {
-        clearTimeout(timer);
-        reject(signal.reason);
-      }
-      signal.addEventListener("abort", abort, { once: true });
-    }),
-};
+export { realClock } from "./credential.ts";
 
-interface InitArguments {
+interface InitArguments extends Origins {
   name: string;
   slug: string | undefined;
   locale: string;
   home: string;
   waitMs: number;
   revealKey: boolean;
-  origin: string;
-  onboardingUrl: string;
-  apiUrl: string;
-  gatewayUrl: string;
 }
 
 export async function runInit(
@@ -189,71 +158,8 @@ async function execute(
     resumed = true;
   };
 
-  const guard = () => {
-    if (signal.aborted) throw signal.reason;
-  };
-  /**
-   * One bounded rate-limit wait, never past the wait budget. A delay the server
-   * did not project is a guess, so it is retried at most twice.
-   */
-  const request = async <Value>(send: () => Promise<Value>): Promise<Value> => {
-    let guessed = 0;
-    for (let attempt = 0; ; attempt += 1) {
-      guard();
-      try {
-        return await send();
-      } catch (error) {
-        const limit = rateLimitDelay(error);
-        if (limit === undefined) throw error;
-        if (!limit.projected) guessed += 1;
-        if (
-          attempt >= MAX_RATE_LIMIT_RETRIES ||
-          guessed > MAX_FIXED_RATE_LIMIT_RETRIES ||
-          clock.now() + limit.delayMs > budget
-        ) {
-          throw error;
-        }
-        await clock.sleep(limit.delayMs, signal);
-      }
-    }
-  };
-  /**
-   * A challenge-bound mutation cannot be replayed after a 429: the proof is
-   * single-use and expires in a minute, so resending it would fail as an
-   * invalid challenge. Wait out the delay, then challenge and sign again. A
-   * delay that would outlast the run's budget refuses instead of sleeping.
-   */
-  const challenged = async <Value>(
-    send: () => Promise<Value>,
-  ): Promise<Value> => {
-    for (let attempt = 0; ; attempt += 1) {
-      guard();
-      try {
-        return await send();
-      } catch (error) {
-        const limit = rateLimitDelay(error);
-        if (limit === undefined) throw error;
-        if (
-          attempt >= MAX_RATE_LIMIT_RETRIES ||
-          clock.now() + limit.delayMs > budget
-        ) {
-          throw rateLimited();
-        }
-        await clock.sleep(limit.delayMs, signal);
-      }
-    }
-  };
-  const sign = async (produce: () => Promise<string>): Promise<string> => {
-    try {
-      return await produce();
-    } catch {
-      throw new CliError(
-        "INVALID_CONFIGURATION",
-        "The machine ownership proof could not be produced. The onboarding origin must be a canonical HTTPS URL.",
-        ["onboarding-url"],
-      );
-    }
-  };
+  const attempts = retries({ clock, signal, budget, rateLimited });
+  const { challenged, request, sign } = attempts;
 
   const onboarding = new DaykeeperOnboardingClient({
     baseUrl: args.onboardingUrl,
@@ -347,7 +253,16 @@ async function execute(
   }
   if (needsRotation(state.credential, clock.now())) {
     progress.setStep("recover");
-    await rotate();
+    await rotateCredential({
+      state,
+      ownerId: workspace.ownerId,
+      signer,
+      onboarding,
+      rotationAudience,
+      save,
+      retries: attempts,
+      addSecret: context.addSecret,
+    });
     ran("recover");
   }
 
@@ -583,144 +498,6 @@ async function execute(
       ["run_init_again"],
     );
   }
-
-  /**
-   * Replace a lost or expiring credential. The rotation intent is stored, so a
-   * crashed run replays it instead of minting a second credential; a replay that
-   * cannot re-reveal its token is retried under one fresh intent.
-   */
-  async function rotate(): Promise<void> {
-    const ownerId = workspace!.ownerId;
-    let expected = state.credential?.id ?? null;
-    if (!expected) expected = (await currentCredential(NIL_UUID)).credentialId;
-    for (let attempt = 1; ; attempt += 1) {
-      const intentId = state.credential?.rotationIntentId ?? randomUUID();
-      state.credential = {
-        ...(state.credential ?? emptyCredential()),
-        id: expected,
-        rotationIntentId: intentId,
-      };
-      await save();
-      const input: MachineRotationInput = {
-        ownerId,
-        expectedCredentialId: expected,
-        intentId,
-      };
-      let result;
-      try {
-        result = await challenged(async () => {
-          const challenge = await request(() =>
-            onboarding.credentialRotations.challenge(input),
-          );
-          const proof = await sign(() =>
-            signer.signRotation(challenge, input, {
-              audience: rotationAudience,
-            }),
-          );
-          return onboarding.credentialRotations.create({
-            challengeId: challenge.challengeId,
-            proof,
-          });
-        });
-      } catch (error) {
-        if (
-          attempt < MAX_ROTATION_ATTEMPTS &&
-          isApiCode(error, "RESOURCE_VERSION_CONFLICT")
-        ) {
-          expected = (await currentCredential(expected)).credentialId;
-          continue;
-        }
-        throw error;
-      }
-      // As with enrollment, the credential is redacted the moment it arrives.
-      if (result.token) context.addSecret(result.token);
-      if (result.token === null) {
-        if (attempt >= MAX_ROTATION_ATTEMPTS) {
-          throw new CliError(
-            "CREDENTIAL_UNRECOVERABLE",
-            "The stored rotation was already applied and its credential cannot be revealed again.",
-            ["credential"],
-          );
-        }
-        expected = result.credentialId;
-        state.credential = {
-          ...(state.credential ?? emptyCredential()),
-          rotationIntentId: null,
-        };
-        await save();
-        continue;
-      }
-      state.credential = {
-        id: result.credentialId,
-        expiresAt: result.expiresAt,
-        token: result.token,
-        rotationIntentId: null,
-      };
-      await save();
-      return;
-    }
-  }
-
-  /** Read the owner's real current credential id with a fresh, throwaway proof. */
-  async function currentCredential(probe: string) {
-    const input: MachineRotationInput = {
-      ownerId: workspace!.ownerId,
-      expectedCredentialId: probe,
-      intentId: randomUUID(),
-    };
-    return challenged(async () => {
-      const challenge = await request(() =>
-        onboarding.credentialRotations.challenge(input),
-      );
-      const proof = await sign(() =>
-        signer.signRotation(challenge, input, { audience: rotationAudience }),
-      );
-      return onboarding.credentialRotations.current({
-        challengeId: challenge.challengeId,
-        proof,
-      });
-    });
-  }
-}
-
-const PINNED_ORIGINS = [
-  ["origin", "origin"],
-  ["onboardingUrl", "onboarding-url"],
-  ["apiUrl", "base-url"],
-  ["gatewayUrl", "gateway-url"],
-] as const;
-
-/**
- * The state file records the origins its credential was minted against. A run
- * that resolves different ones is refused rather than resumed: no stored token
- * is ever sent to a host that did not issue it. Only hostnames are reported,
- * never the configured URLs.
- */
-function assertPinnedOrigin(stored: InitState, args: InitArguments): void {
-  const differing = PINNED_ORIGINS.filter(([key]) => stored[key] !== args[key]);
-  if (differing.length === 0) return;
-  const [key] = differing[0]!;
-  throw new CliError(
-    "STATE_ORIGIN_MISMATCH",
-    "The stored Daykeeper credential was issued for a different origin. No request was sent. Point --home at a separate directory for this origin, or remove the state file.",
-    differing.map(([, field]) => field),
-    false,
-    [],
-    {
-      ...host("storedHost", stored[key]),
-      ...host("requestedHost", args[key]),
-    },
-  );
-}
-
-function host(label: string, value: unknown): Record<string, string> {
-  if (typeof value !== "string") return {};
-  try {
-    const { host: name } = new URL(value);
-    return name ? { [label]: name } : {};
-  } catch {
-    return {};
-  }
 }
 
 function mcpServers(apiUrl: string, key: string) {
@@ -741,41 +518,6 @@ function mcpServers(apiUrl: string, key: string) {
   };
 }
 
-function emptyCredential(): CredentialState {
-  return { id: null, expiresAt: null, token: null, rotationIntentId: null };
-}
-
-function needsRotation(
-  credential: CredentialState | undefined,
-  now: number,
-): boolean {
-  if (!credential?.token || !credential.id) return true;
-  const expiry = Date.parse(credential.expiresAt ?? "");
-  return !Number.isFinite(expiry) || expiry - now <= CREDENTIAL_REFRESH_MS;
-}
-
-interface RateLimit {
-  delayMs: number;
-  /** True when the server itself stated the delay through `Retry-After`. */
-  projected: boolean;
-}
-
-function rateLimitDelay(error: unknown): RateLimit | undefined {
-  if (error instanceof DaykeeperOnboardingApiError && error.status === 429) {
-    const seconds = error.retryAfterSeconds;
-    const requested =
-      seconds === undefined ? DEFAULT_RETRY_AFTER_MS : seconds * 1000;
-    return {
-      delayMs: Math.min(Math.max(requested, 0), MAX_RETRY_AFTER_MS),
-      projected: seconds !== undefined,
-    };
-  }
-  // The management SDK does not project Retry-After, so a fixed delay is used.
-  if (error instanceof DaykeeperApiError && error.status === 429)
-    return { delayMs: DEFAULT_RETRY_AFTER_MS, projected: false };
-  return undefined;
-}
-
 function rateLimited(): CliError {
   return new CliError(
     "RATE_LIMITED",
@@ -784,10 +526,6 @@ function rateLimited(): CliError {
     true,
     ["run_init_again"],
   );
-}
-
-function isApiCode(error: unknown, code: string): boolean {
-  return error instanceof DaykeeperApiError && error.code === code;
 }
 
 export function deriveSlug(source: string): string {
@@ -862,44 +600,6 @@ function parseInitArguments(
     );
   }
 
-  const explicitOrigin = text(options.origin) ?? env.DAYKEEPER_ORIGIN;
-  const origin = explicitOrigin ?? HOSTED_ORIGIN;
-  // A custom origin serves its own gateway; only the hosted origin pairs with
-  // the hosted gateway.
-  const gatewayFallback = explicitOrigin ? origin : HOSTED_GATEWAY_URL;
-  const services: [keyof InitArguments, string, string | undefined][] = [
-    [
-      "onboardingUrl",
-      "onboarding-url",
-      text(options["onboarding-url"]) ?? env.DAYKEEPER_ONBOARDING_URL ?? origin,
-    ],
-    [
-      "apiUrl",
-      "base-url",
-      text(options["base-url"]) ?? env.DAYKEEPER_API_URL ?? origin,
-    ],
-    [
-      "gatewayUrl",
-      "gateway-url",
-      text(options["gateway-url"]) ??
-        env.DAYKEEPER_GATEWAY_URL ??
-        gatewayFallback,
-    ],
-  ];
-  const resolved: Record<string, string> = {};
-  for (const [key, field, value] of services) {
-    if (!value) {
-      throw new CliError(
-        "ORIGIN_REQUIRED",
-        "No Daykeeper origin is configured. Pass --origin or set DAYKEEPER_ORIGIN, then run init again.",
-        ["origin", field],
-        false,
-        ["run_init_again"],
-      );
-    }
-    resolved[key] = canonicalOrigin(value, field);
-  }
-
   return {
     name,
     slug,
@@ -907,51 +607,6 @@ function parseInitArguments(
     home: resolveHome(text(options.home), env),
     waitMs,
     revealKey: options["reveal-key"] === true,
-    origin: origin ? canonicalOrigin(origin, "origin") : resolved.apiUrl!,
-    onboardingUrl: resolved.onboardingUrl!,
-    apiUrl: resolved.apiUrl!,
-    gatewayUrl: resolved.gatewayUrl!,
+    ...resolveOrigins(options, env),
   };
-}
-
-/**
- * Preflight: `GET /v1/capabilities` needs a credential, so the only check that
- * can run before enrollment is the origin itself.
- */
-function canonicalOrigin(value: string, field: string): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new CliError(
-      "INVALID_CONFIGURATION",
-      "A Daykeeper origin must be an absolute URL.",
-      [field],
-    );
-  }
-  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(
-    url.host.split(":")[0] ?? "",
-  );
-  if (url.protocol !== "https:" && !(loopback && url.protocol === "http:")) {
-    throw new CliError(
-      "INVALID_CONFIGURATION",
-      "A Daykeeper origin must use HTTPS; only loopback development origins may use HTTP.",
-      [field],
-    );
-  }
-  if (url.username || url.password || url.search || url.hash) {
-    throw new CliError(
-      "INVALID_CONFIGURATION",
-      "A Daykeeper origin cannot carry credentials, a query, or a fragment.",
-      [field],
-    );
-  }
-  if (url.pathname !== "/") {
-    throw new CliError(
-      "INVALID_CONFIGURATION",
-      "A Daykeeper origin cannot carry a path.",
-      [field],
-    );
-  }
-  return url.origin;
 }
