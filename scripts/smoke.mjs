@@ -50,9 +50,9 @@ async function call(bin, args, environment = {}) {
 export async function verifyExecutable(bin) {
   const help = await call(bin, ["--help"]);
   assert.equal(help.exitCode, 0);
-  assert.equal(help.envelope.data.commands.length, 17);
+  assert.equal(help.envelope.data.commands.length, 19);
   const version = await call(bin, ["--version"]);
-  assert.equal(version.envelope.data.sdkVersion, "0.2.0");
+  assert.equal(version.envelope.data.sdkVersion, "0.3.0");
   const missingAuth = await call(bin, ["capabilities"], {
     DAYKEEPER_API_URL: "https://example.test",
   });
@@ -90,6 +90,20 @@ export async function verifyExecutable(bin) {
     );
     assert.equal(suppliedToken.exitCode, 1);
     assert.equal(suppliedToken.envelope.error.code, "INVALID_ARGUMENT");
+
+    // `claim` reads what `init` wrote, so an empty home refuses before it can
+    // resolve an origin or send anything.
+    const unclaimable = await call(bin, [
+      "claim",
+      "--email",
+      "owner@example.test",
+      "--origin",
+      "https://example.test",
+      "--home",
+      home,
+    ]);
+    assert.equal(unclaimable.exitCode, 1);
+    assert.equal(unclaimable.envelope.error.code, "INIT_REQUIRED");
     assert.deepEqual(await readdir(home), [], "No state is written on refusal");
   } finally {
     await rm(home, { recursive: true, force: true });

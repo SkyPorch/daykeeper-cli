@@ -458,7 +458,7 @@ test("a fresh run enrolls, provisions, activates, and writes configuration", asy
   assert.equal(data.credential.id, CREDENTIAL);
   assert.equal(data.credential.storedAt, join(directory, "credentials.json"));
   assert.deepEqual(data.endpoints, { apiUrl: ORIGIN, gatewayUrl: ORIGIN });
-  assert.equal(data.sdk.packages.backend, "@skyporch/daykeeper@0.2.0");
+  assert.equal(data.sdk.packages.backend, "@skyporch/daykeeper@0.3.0");
   assert.equal(data.mcp.configPath, join(directory, "mcp.json"));
   assert.equal(
     data.mcp.mcpServers.daykeeper.env.DAYKEEPER_API_KEY,

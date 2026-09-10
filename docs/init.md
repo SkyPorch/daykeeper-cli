@@ -200,7 +200,7 @@ Success envelope, `data` shape:
   "endpoints": { "apiUrl": "https://…", "gatewayUrl": "https://…" },
   "sdk": {
     "packages": {
-      "backend": "@skyporch/daykeeper@0.2.0",
+      "backend": "@skyporch/daykeeper@0.3.0",
       "reactNative": "@skyporch/daykeeper-react-native@0.1.0"
     },
     "env": {
@@ -292,6 +292,12 @@ both refused.
 
 ## Out of scope
 
-Human claim of an agent-created workspace, the agent page on the website,
-publishing the CLI, paid plans, website and email inboxes, and customer-session
-minting from the CLI. Each is a separate change.
+The agent page on the website, publishing the CLI, paid plans, website and email
+inboxes, and customer-session minting from the CLI. Each is a separate change.
+
+Human claim of an agent-created workspace was out of scope here and is now
+specified separately: see `daykeeper claim` in `COMMANDS.md` and
+`docs/operations/workspace-claim-v1.md` in the platform repository. `claim`
+reads the state file described above, reuses this command's origin pinning and
+credential rotation, and adds a `claims` map to the same file — recording each
+claim's id, address, expiry, and idempotency key, and never its token or URL.

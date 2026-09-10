@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { CliError } from "./errors.ts";
 
-/** Only `init` persists state; every other command stays stateless. */
+/** Only `init` and `claim` persist state; every other command stays stateless. */
 export const STATE_VERSION = 1;
 export const STATE_FILE = "credentials.json";
 export const MCP_FILE = "mcp.json";
@@ -58,6 +58,22 @@ export interface InboxState {
   provisionedAt: string | null;
 }
 
+/**
+ * One issued owner claim, keyed in the state file by its lowercased address.
+ * The claim token and the claim URL that carries it are deliberately absent:
+ * the URL is handed to a person once, at the moment it is printed, and is
+ * never written to disk.
+ */
+export interface ClaimState {
+  /** Null only between persisting the intent and the server answering. */
+  id: string | null;
+  email: string;
+  idempotencyKey: string;
+  expiresAt: string | null;
+  state: string | null;
+  updatedAt: string;
+}
+
 export interface InitState {
   version: number;
   origin: string;
@@ -70,6 +86,8 @@ export interface InitState {
   workspace?: WorkspaceState;
   credential?: CredentialState;
   inbox?: InboxState;
+  /** Keyed by lowercased email so one address never mints two claims. */
+  claims?: Record<string, ClaimState>;
   updatedAt: string;
 }
 

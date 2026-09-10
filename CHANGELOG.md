@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added
+
+- Add `daykeeper claim --email <address>`. It hands the workspace `init` created
+  to a person: it issues an owner invitation for that address under the stored
+  machine credential and prints the link that accepts it. `daykeeper claim
+status` lists the claims the server holds and reconciles the stored records.
+  See `COMMANDS.md`.
+- The claim URL carries its invitation token in the URL fragment and is printed
+  unredacted, once, because it is the handoff. It is deliberately not added to
+  the redaction list; the machine credential and the owner private key still
+  are. The state file records each claim's id, address, expiry, and idempotency
+  key under `claims`, and never the token or the URL.
+- One idempotency key per lowercased address, persisted before the mutation is
+  sent: a rerun replays the pending claim without a link and reports
+  `nextActions: ["reissue_claim"]`, and `--reissue` revokes the pending claim
+  before creating a new one under a fresh key.
+- `claim` reuses `init`'s origin pinning and credential rotation rather than
+  duplicating them, so a credential inside its last 24 hours is replaced before
+  the claim is sent, and a stored credential is never offered to a host that did
+  not issue it. Like `init`, `claim` refuses `--token-stdin` and
+  `DAYKEEPER_ACCESS_TOKEN`. A missing or un-enrolled state file fails with the
+  new `INIT_REQUIRED`.
+
+### Changed
+
+- Pin `@skyporch/daykeeper` `0.3.0` in place of `0.2.0` for its `workspaceClaims`
+  namespace. Management contract `v1.3.0`, additive. Every existing command is
+  unchanged.
 - `init` no longer suggests a rerun when the server refuses enrollment with
   `BOOTSTRAP_LIMIT_REACHED` or `BOOTSTRAP_UNAVAILABLE`; it names the operator
   admission budget instead.

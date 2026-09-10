@@ -1,15 +1,16 @@
 # Daykeeper CLI command contract
 
 Envelope version: `daykeeper.cli.v1`. CLI foundation: `0.1.0`. Runtime management
-SDK: the published `@skyporch/daykeeper@0.2.0`.
+SDK: `@skyporch/daykeeper@0.3.0`.
 
 ## Commands
 
-`init` is described in its own section below: it is the one command that makes
-several SDK calls and the one command that persists state. Every other network
-command requires an explicit API base URL and one scoped access token, and calls
-exactly one SDK method. Scope names below are required by the API, not
-permissions granted by a CLI option.
+`init` and `claim` are described in their own sections below: they are the
+commands that make several SDK calls and the commands that persist state, and
+both run under the credential `init` mints rather than a supplied one. Every
+other network command requires an explicit API base URL and one scoped access
+token, and calls exactly one SDK method. Scope names below are required by the
+API, not permissions granted by a CLI option.
 
 | Command                  | Required flags                                                               | Optional flags | API scope                      | Effect                                        |
 | ------------------------ | ---------------------------------------------------------------------------- | -------------- | ------------------------------ | --------------------------------------------- |
@@ -29,6 +30,8 @@ permissions granted by a CLI option.
 | `flows versions get`     | `--flow-id`, `--version`                                                     | —              | `daykeeper.flows:read`         | Read exact immutable revision                 |
 | `flows versions create`  | `--flow-id`, `--input`, `--idempotency-key`                                  | —              | `daykeeper.flows:write`        | Create a revision with optimistic concurrency |
 | `flows versions publish` | `--flow-id`, `--version`, `--expected-resource-version`, `--idempotency-key` | —              | `daykeeper.flows:publish`      | Publish an existing revision                  |
+| `claim`                  | `--email`                                                                    | `--reissue`    | `daykeeper.accounts:write`     | Issue one owner claim link                    |
+| `claim status`           | —                                                                            | —              | `daykeeper.accounts:read`      | List claims and reconcile stored records      |
 
 Identifiers must be UUIDs. Version flags must be positive safe integers.
 Idempotency keys must contain 16–128 ASCII letters, digits, periods, underscores,
@@ -40,16 +43,16 @@ catalog, or a single command's catalog when supplied with its command name.
 Global options are `--base-url`, `--timeout-ms`, `--token-stdin`, `--json`, and
 `--help`. `DAYKEEPER_API_URL`, `DAYKEEPER_ACCESS_TOKEN`, and
 `DAYKEEPER_TIMEOUT_MS` are the configuration environment variables every command
-reads; `init` additionally reads `DAYKEEPER_ORIGIN`, `DAYKEEPER_ONBOARDING_URL`,
-`DAYKEEPER_GATEWAY_URL`, `DAYKEEPER_HOME`, and `XDG_CONFIG_HOME`. Explicit flags
-override their environment values. Apart from the files `init` writes under its
-own home, there are no config files, saved profiles, token arguments, or
-interactive prompts.
+reads; `init` and `claim` additionally read `DAYKEEPER_ORIGIN`,
+`DAYKEEPER_ONBOARDING_URL`, `DAYKEEPER_GATEWAY_URL`, `DAYKEEPER_HOME`, and
+`XDG_CONFIG_HOME`. Explicit flags override their environment values. Apart from
+the files `init` writes under its own home, there are no config files, saved
+profiles, token arguments, or interactive prompts.
 
 ## `init`
 
-`init` is the only command that persists state and the only command that makes
-more than one SDK call. It enrolls a machine owner, stores the credential
+`init` is the command that creates the workspace; `claim` (below) is the only
+other command that persists state or makes more than one SDK call. It enrolls a machine owner, stores the credential
 locally, creates one Free workspace with an API inbox, waits for provisioning,
 activates the inbox, and prints the identifiers with ready-to-paste SDK and MCP
 configuration. Run it again and it resumes from wherever it stopped; it never
@@ -164,7 +167,7 @@ does, that delay follows the header like the onboarding ones.
   "endpoints": { "apiUrl": "https://…", "gatewayUrl": "https://…" },
   "sdk": {
     "packages": {
-      "backend": "@skyporch/daykeeper@0.2.0",
+      "backend": "@skyporch/daykeeper@0.3.0",
       "reactNative": "@skyporch/daykeeper-react-native@0.1.0"
     },
     "env": {
@@ -219,6 +222,102 @@ signup admission budget is the operator's to raise; `init` reports
 and carries `nextActions: ["run_init_again"]` whenever a rerun can resume.
 `PROVISIONING_FAILED` also carries the `operationId` and next action
 `operations_retry`; `init` never retries an operation on its own.
+
+## `claim`
+
+`claim` hands the workspace `init` created to a person. It issues an owner
+invitation for one address and prints the link that accepts it. The person signs
+in the way the console already signs people in and lands in the inbox as an
+owner; the machine owner keeps its credential and keeps working.
+
+```sh
+daykeeper claim --email gabriel@acme.example
+daykeeper claim status
+```
+
+| Flag                                              | Required | Meaning                                                                                                |
+| ------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `--email <address>`                               | yes      | The address that may accept the claim, at most 254 characters. Lowercased before it is sent or stored. |
+| `--reissue`                                       | no       | Revoke the pending claim for that address, then issue a new one under a fresh key.                     |
+| `--origin <https url>`                            | no       | As for `init`, and pinned the same way. Env `DAYKEEPER_ORIGIN`.                                        |
+| `--onboarding-url`, `--base-url`, `--gateway-url` | no       | Per-service overrides, as for `init`.                                                                  |
+| `--home <dir>`                                    | no       | Where `init` stored its state. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`.                |
+| `--json`                                          | no       | Accepted for symmetry. Output is always JSON.                                                          |
+
+`claim` reads the state file `init` wrote and runs under the credential stored
+there. Like `init`, it refuses `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN`
+rather than silently ignoring them, and it refuses to send a stored credential
+to an origin that did not issue it: a resolved origin that differs from the
+pinned one fails with `STATE_ORIGIN_MISMATCH` before any request. A missing or
+un-enrolled state file fails with `INIT_REQUIRED`; an unreadable or
+world-readable one fails with `STATE_UNREADABLE` or `STATE_INSECURE` exactly as
+it does for `init`. A credential inside its last 24 hours is rotated first,
+through the same rotation path `init` uses, so the claim is always sent under a
+credential that will outlive it. `claim` polls nothing; its only waiting is a
+bounded 60-second rate-limit sleep, and a longer delay refuses with a resumable
+`RATE_LIMITED`.
+
+### The claim URL is a secret, printed on purpose
+
+`claimUrl` carries the invitation token in its URL fragment. It is printed
+unredacted, once, because it is the handoff: there is no email delivery, and the
+agent is the only party that can give it to a person. It is therefore **not**
+added to the redaction list, unlike the machine credential and the owner private
+key, which stay redacted. The state file records the claim id, address, expiry,
+and idempotency key, and **never** the token or the URL. Treat the printed link
+the way you would treat a password reset link.
+
+### Intent and replay
+
+The idempotency key is generated once per lowercased address and stored under
+`claims` in the state file before the mutation is sent, so an interrupted run
+replays that key instead of issuing a second claim. Rerunning the same intent
+returns the pending claim with `token` and `claimUrl` as `null`, `replayed:
+true`, and `nextActions: ["reissue_claim"]`: the link cannot be shown twice.
+`--reissue` revokes the pending claim first and then creates under a fresh key,
+because the retired key would otherwise replay the revoked claim.
+
+`claim status` lists the claims the server holds and reconciles the stored
+records against them: a claim whose state or expiry moved is updated, and a
+claim the server no longer lists — expired or revoked — is dropped, because its
+stored key is spent. A record whose claim was never confirmed keeps its key so a
+rerun replays the interrupted intent. `claim status` sends no mutation.
+
+### Output
+
+```json
+{
+  "claim": {
+    "id": "…",
+    "organizationId": "…",
+    "email": "gabriel@acme.example",
+    "role": "owner",
+    "state": "pending",
+    "expiresAt": "…",
+    "createdAt": "…"
+  },
+  "claimUrl": "https://console…/claim#token=dk_invite_…",
+  "replayed": false,
+  "nextActions": [],
+  "credentialRotated": false
+}
+```
+
+`claim status` returns `{ "claims": [claim…], "reconciled": { "updated": 0,
+"forgotten": 0 }, "credentialRotated": false }`.
+
+### Errors
+
+`claim` adds `INIT_REQUIRED` with `nextActions: ["run_init"]`, and reuses
+`STATE_UNREADABLE`, `STATE_INSECURE`, `STATE_ORIGIN_MISMATCH`, `RATE_LIMITED`,
+and `CREDENTIAL_UNRECOVERABLE` from `init`. Server refusals keep their own
+codes: `INVITATION_ALREADY_PENDING` when a different intent is sent for an
+address that already holds a pending claim, `ALREADY_A_MEMBER`, `RATE_LIMITED`,
+and `FEATURE_UNAVAILABLE` when the deployment has no console origin configured.
+A claim whose outcome is lost to transport failure, timeout, cancellation, or a
+`5xx` reports `mutationOutcome: "unknown"` with
+`nextActions: ["run_claim_status", "reuse_original_idempotency_key"]`; the
+stored key is kept, so the rerun replays it.
 
 ## JSON input
 
@@ -336,7 +435,7 @@ its result was lost to transport failure, timeout, cancellation, or a server-sid
 work, and does not establish that a mutation is safe to repeat.
 
 `retryable` describes the reported failure, not permission to repeat a mutation.
-No command other than `init` retries automatically, including on `401`, `429`, or
+No command other than `init` and `claim` retries automatically, including on `401`, `429`, or
 `5xx`. The published management SDK does not expose `Retry-After` through its
 error object; this CLI does not invent a retry delay outside `init`. Use plan/apply idempotency or inspect resource
 state before explicitly trying again. For automation, rely on `code`, `status`,

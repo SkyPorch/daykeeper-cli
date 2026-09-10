@@ -1,7 +1,7 @@
 # Daykeeper CLI
 
 A command line for people, agents, and CI jobs managing Daykeeper. It calls the
-published `@skyporch/daykeeper@0.2.0` SDK and returns one versioned JSON envelope
+`@skyporch/daykeeper@0.3.0` SDK and returns one versioned JSON envelope
 per invocation. It does not depend on a private application or workspace package.
 
 This is an **unpublished foundation** for `@skyporch/daykeeper-cli`. The package
@@ -37,6 +37,19 @@ identifiers with ready-to-paste SDK and MCP configuration. Run it again and it
 resumes from wherever it stopped; it never creates a second workspace,
 credential, or inbox.
 
+Hand that workspace to a person with one more command:
+
+```sh
+node dist/cli.js claim --email gabriel@acme.example --origin https://your-daykeeper-origin.example
+```
+
+`claim` issues an owner invitation for that address and prints the link that
+accepts it. The link carries its token in the URL fragment and is printed
+unredacted, once, because it is the handoff — treat it like a password reset
+link. It is never written to the state file. Rerunning returns the pending claim
+without a link; `--reissue` revokes it and issues a new one, and `claim status`
+lists what the server holds. See [COMMANDS.md](COMMANDS.md).
+
 `init` talks to the hosted Daykeeper at `https://api.mydaykeeper.com` unless
 you pass `--origin` or set `DAYKEEPER_ORIGIN`. The
 credential is redacted from output unless you pass `--reveal-key`, but
@@ -48,8 +61,8 @@ state layout, resume behavior, and error codes are in
 
 ## Authenticate
 
-`init` is the only command that stores a credential. Every other command takes
-one you supply. Set `DAYKEEPER_API_URL` to your intended management API origin, including any
+`init` is the only command that stores a credential, and `claim` is the only
+other command that uses it. Every other command takes one you supply. Set `DAYKEEPER_API_URL` to your intended management API origin, including any
 reverse-proxy prefix. There is no default production endpoint. Remote origins
 must use HTTPS; `http://127.0.0.1` and `http://localhost` are supported for local
 development. URLs with credentials, query strings, or fragments are rejected,
@@ -60,7 +73,7 @@ Supply a scoped access token using one of these sources:
 - `DAYKEEPER_ACCESS_TOKEN`, injected by your secret manager or CI environment.
 - `--token-stdin`, with the token piped from a trusted credential provider.
 
-Use exactly one source. Outside `init`, the CLI accepts no token argument,
+Use exactly one source. Outside `init` and `claim`, the CLI accepts no token argument,
 stores no credential, and never opens an interactive sign-in prompt. Tokens must be 20–16,384 bearer
 characters. It uses the supplied token for one request and does not attempt a
 credential refresh after a `401`.
@@ -134,8 +147,8 @@ redacted if reflected in output.
 ## What is not implemented
 
 - Hosted OAuth login, human signup, account ownership verification, or token
-  refresh. `init` performs machine enrollment only; human claim of an
-  agent-created workspace stays in the console.
+  refresh. `init` performs machine enrollment only, and `claim` only issues the
+  invitation: accepting it, and every sign-in it needs, stays in the console.
 - Membership or API-key administration, billing, usage, or entitlement changes.
 - Automatic DNS changes, operation polling, background workers, or flow execution.
 - Customer-session token issuance from the CLI; credentials are never minted to stdout.
@@ -150,9 +163,9 @@ does not mean that a flow is executing against conversations.
 pnpm check
 ```
 
-Checks cover all 16 single-call command mappings through the real published SDK,
-the whole `init` step machine against loopback onboarding and management
-fixtures with state in a temporary home, input and credential boundaries, denial/redaction behavior, deadlines and cancellation,
+Checks cover all 16 single-call command mappings through the real SDK, the whole
+`init` step machine and both `claim` forms against loopback onboarding and
+management fixtures with state in a temporary home, input and credential boundaries, denial/redaction behavior, deadlines and cancellation,
 the compiled executable against a synthetic loopback API, and an unpacked npm
 tarball with its pinned production dependencies installed offline using a
 verification-only copy of this repository's frozen lockfile. That lockfile is

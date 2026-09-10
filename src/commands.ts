@@ -50,6 +50,41 @@ const commands: readonly Command[] = [
     scopes: [],
   },
   {
+    name: "claim",
+    effect: "mutation",
+    summary:
+      "Issue an owner claim link for the workspace init created, and print it once.",
+    required: ["email"],
+    optional: [
+      "reissue",
+      "origin",
+      "onboarding-url",
+      "base-url",
+      "gateway-url",
+      "home",
+      "json",
+    ],
+    // The stored machine credential carries these scopes; no CLI option grants
+    // them, and the command runs without a supplied access token.
+    scopes: ["daykeeper.accounts:write"],
+  },
+  {
+    name: "claim status",
+    effect: "read",
+    summary:
+      "List the workspace claims the server holds and reconcile the stored records.",
+    required: [],
+    optional: [
+      "origin",
+      "onboarding-url",
+      "base-url",
+      "gateway-url",
+      "home",
+      "json",
+    ],
+    scopes: ["daykeeper.accounts:read"],
+  },
+  {
     name: "capabilities",
     effect: "read",
     summary: "Inspect server capabilities and execution gates.",
@@ -204,8 +239,16 @@ const stringOptions = [
   "locale",
   "home",
   "wait-ms",
+  "email",
 ];
-const booleanOptions = ["token-stdin", "json", "help", "reveal-key"];
+const booleanOptions = ["token-stdin", "json", "help", "reveal-key", "reissue"];
+
+/**
+ * The commands that run under the credential `init` stored. They mint or read
+ * their own authority, so a supplied access token is refused rather than
+ * silently ignored.
+ */
+export const STATEFUL_COMMANDS = new Set(["init", "claim", "claim status"]);
 
 export interface ParsedCommand {
   command?: Command;
@@ -291,10 +334,12 @@ export function parseCommand(args: readonly string[]): ParsedCommand {
       missing,
     );
   }
-  if (command.name === "init" && options["token-stdin"]) {
+  if (STATEFUL_COMMANDS.has(command.name) && options["token-stdin"]) {
     throw new CliError(
       "INVALID_ARGUMENT",
-      "init creates its own credential and must not run under another access token.",
+      command.name === "init"
+        ? "init creates its own credential and must not run under another access token."
+        : "claim uses the credential init stored and must not run under another access token.",
       ["token-stdin"],
     );
   }

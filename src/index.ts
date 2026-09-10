@@ -6,7 +6,9 @@ import {
   MAX_TOKEN_BYTES,
   SDK_VERSION,
 } from "./constants.ts";
+import { runClaim, type ClaimContext } from "./claim.ts";
 import {
+  STATEFUL_COMMANDS,
   commandCatalog,
   dispatch,
   parseCommand,
@@ -66,7 +68,7 @@ export async function runCli(
             ? {
                 output: "One JSON envelope on stdout. No interactive prompts.",
                 authentication:
-                  "DAYKEEPER_ACCESS_TOKEN or --token-stdin; use exactly one source. The server enforces scopes and tenant access. init is the exception: it mints and stores its own credential and rejects both sources.",
+                  "DAYKEEPER_ACCESS_TOKEN or --token-stdin; use exactly one source. The server enforces scopes and tenant access. init and claim are the exceptions: init mints and stores its own credential, claim uses the one it stored, and both reject either source.",
                 globalOptions: [
                   "--base-url",
                   "--timeout-ms",
@@ -82,19 +84,23 @@ export async function runCli(
             : {}),
         },
       };
-    } else if (parsed.command?.name === "init") {
-      // `init` mints its own credential, so it never runs under a supplied
-      // token, and its own wait budget bounds the run instead of one deadline.
+    } else if (STATEFUL_COMMANDS.has(parsed.command?.name ?? "")) {
+      // These commands carry their own credential, so they never run under a
+      // supplied token, and their own wait budget bounds the run instead of
+      // one deadline.
+      const name = parsed.command!.name;
       if (environmentToken)
         throw new CliError(
           "INVALID_ARGUMENT",
-          "init creates its own credential; unset DAYKEEPER_ACCESS_TOKEN before running it.",
+          name === "init"
+            ? "init creates its own credential; unset DAYKEEPER_ACCESS_TOKEN before running it."
+            : "claim uses the credential init stored; unset DAYKEEPER_ACCESS_TOKEN before running it.",
           ["DAYKEEPER_ACCESS_TOKEN"],
         );
       const timeoutMs = requestTimeoutMs(parsed.options, context.env);
       const transport = context.fetch ?? globalThis.fetch;
       const signal = context.signal ?? new AbortController().signal;
-      const data = await runInit({
+      const stateful: ClaimContext = {
         options: parsed.options,
         env: context.env,
         timeoutMs,
@@ -113,22 +119,31 @@ export async function runCli(
         addSecret: (secret) => {
           if (secret) secrets.push(secret);
         },
-        reveal: (secret) => {
-          const placeholder = `daykeeper-cli-revealed-${randomUUID()}`;
-          revealed.set(placeholder, secret);
-          return placeholder;
-        },
-      }).catch((error: unknown) => {
-        if (error instanceof InitStepError) {
-          initFailure = error;
-          throw error.failure;
-        }
-        throw error;
-      });
+      };
+      const data =
+        name === "init"
+          ? await runInit({
+              ...stateful,
+              reveal: (secret) => {
+                const placeholder = `daykeeper-cli-revealed-${randomUUID()}`;
+                revealed.set(placeholder, secret);
+                return placeholder;
+              },
+            }).catch((error: unknown) => {
+              if (error instanceof InitStepError) {
+                initFailure = error;
+                throw error.failure;
+              }
+              throw error;
+            })
+          : await runClaim(
+              stateful,
+              name === "claim status" ? "status" : "create",
+            );
       envelope = {
         schemaVersion: ENVELOPE_VERSION,
         ok: true,
-        command: "init",
+        command: name,
         data,
       };
     } else {
@@ -320,12 +335,16 @@ export async function runCli(
                   ...details.nextActions,
                   ...(parsed?.command?.name === "init"
                     ? ["run_init_again"]
-                    : parsed?.command?.name.endsWith(" apply")
-                      ? [
-                          "inspect_operation_before_retry",
-                          "reuse_original_idempotency_key",
-                        ]
-                      : ["inspect_resource_before_retry"]),
+                    : parsed?.command?.name === "claim"
+                      ? // A claim keeps its stored idempotency key, so the
+                        // rerun replays it; `claim status` says what landed.
+                        ["run_claim_status", "reuse_original_idempotency_key"]
+                      : parsed?.command?.name.endsWith(" apply")
+                        ? [
+                            "inspect_operation_before_retry",
+                            "reuse_original_idempotency_key",
+                          ]
+                        : ["inspect_resource_before_retry"]),
                 ]),
               ],
             }
