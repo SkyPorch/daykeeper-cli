@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `init` no longer suggests a rerun when the server refuses enrollment with
+  `BOOTSTRAP_LIMIT_REACHED` or `BOOTSTRAP_UNAVAILABLE`; it names the operator
+  admission budget instead.
+
 ## 0.1.0 (2026-09-09)
 
 First published release. Runtime SDK: `@skyporch/daykeeper@0.2.0`; management

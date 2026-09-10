@@ -986,6 +986,30 @@ test("no origin anywhere uses the hosted API and gateway origins", async () => {
   assert(server.requests.length > 0);
 });
 
+test("an exhausted signup budget points at the operator, not at a rerun", async () => {
+  const directory = await home();
+  const server = fixture({
+    once: {
+      "POST /v1/machine-enrollments/challenges": [
+        () => apiError(409, "BOOTSTRAP_LIMIT_REACHED"),
+      ],
+    },
+  });
+  const result = await init({ home: directory, fixture: server });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.envelope.error.code, "BOOTSTRAP_LIMIT_REACHED");
+  assert.deepEqual(result.envelope.error.nextActions, [
+    "contact_daykeeper_operator",
+  ]);
+  assert.match(result.envelope.error.message, /admission budget/);
+  assert(result.envelope.error.fields.includes("enroll"));
+  assert.equal(
+    server.requests.filter((r) => r.method !== "GET").length,
+    1,
+    "only the refused challenge was sent",
+  );
+});
+
 test("an origin must be an HTTPS root without credentials, query, or path", async () => {
   const directory = await home();
   const server = fixture();
