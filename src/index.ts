@@ -14,6 +14,12 @@ import {
 } from "./commands.ts";
 import { CliError, errorEnvelope, reportedOutcomeUnknown } from "./errors.ts";
 import { InitStepError, realClock, runInit, type InitClock } from "./init.ts";
+
+/** Server admission codes that only the Daykeeper operator can lift. */
+const OPERATOR_GATED_CODES = new Set([
+  "BOOTSTRAP_LIMIT_REACHED",
+  "BOOTSTRAP_UNAVAILABLE",
+]);
 import { readBounded, readJsonInput, type InputStream } from "./io.ts";
 import { positiveInteger, validateInput } from "./schemas.ts";
 
@@ -262,16 +268,29 @@ export async function runCli(
     const projected = errorEnvelope(actual, secrets);
     // `init` reports the step it reached, and says a rerun resumes whenever
     // the state file already carries the work that was completed.
+    // Admission refusals are the operator's to lift: a rerun cannot change
+    // them, so they never suggest one.
+    const operatorGated =
+      initFailure !== undefined &&
+      OPERATOR_GATED_CODES.has(String(projected.code));
     const details = initFailure
       ? {
           ...projected,
+          ...(operatorGated
+            ? {
+                message:
+                  "Daykeeper is not admitting new agent workspaces right now. Ask the Daykeeper operator to raise the signup admission budget, then run init again.",
+              }
+            : {}),
           fields: [...new Set([...projected.fields, initFailure.step])],
-          nextActions: [
-            ...new Set([
-              ...projected.nextActions,
-              ...(initFailure.resumable ? ["run_init_again"] : []),
-            ]),
-          ],
+          nextActions: operatorGated
+            ? ["contact_daykeeper_operator"]
+            : [
+                ...new Set([
+                  ...projected.nextActions,
+                  ...(initFailure.resumable ? ["run_init_again"] : []),
+                ]),
+              ],
         }
       : projected;
     const uncertainMutation =

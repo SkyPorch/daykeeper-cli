@@ -208,6 +208,10 @@ carries the literal credential either way. With `--reveal-key`, both
 
 ### Errors
 
+When the server answers `BOOTSTRAP_LIMIT_REACHED` or `BOOTSTRAP_UNAVAILABLE`, the
+signup admission budget is the operator's to raise; `init` reports
+`nextActions: ["contact_daykeeper_operator"]` and no rerun hint.
+
 `init` adds `ORIGIN_REQUIRED`, `STATE_UNREADABLE`, `STATE_INSECURE`,
 `STATE_ORIGIN_MISMATCH`, `RATE_LIMITED`, `PROVISIONING_FAILED`,
 `PROVISIONING_TIMEOUT`, `ACTIVATION_UNAVAILABLE`, and
