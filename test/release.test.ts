@@ -15,13 +15,13 @@ function guard(env: Record<string, string>) {
 test("the release guard accepts an owner-approved, tag-matched release", () => {
   const result = guard({
     DAYKEEPER_RELEASE_APPROVED: "1",
-    GITHUB_REF_NAME: "v0.1.0",
+    GITHUB_REF_NAME: "v0.2.0",
   });
   assert.equal(result.status, 0, result.stderr);
 });
 
 test("the release guard refuses without the owner approval flag", () => {
-  const result = guard({ GITHUB_REF_NAME: "v0.1.0" });
+  const result = guard({ GITHUB_REF_NAME: "v0.2.0" });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /owner-approved release is required/);
 });

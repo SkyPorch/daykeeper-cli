@@ -9,6 +9,7 @@ pull request head is never an acceptable record.
 
 | CLI version | Management contract | Customer contract | SDK dependency              | Contract tag / commit                                                                                                                                                   |
 | ----------- | ------------------- | ----------------- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.2.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                                                          |
 | 0.1.0       | v1.1.0              | not used          | `@skyporch/daykeeper` 0.2.0 | `v1.1.0` @ `c9a0175d0053f1a2d57c9329f6d3a36ec6acdb71` (SkyPorch/daykeeper-openapi, 2026-09-08); the tag the SDK 0.2.0 release recorded                                  |
 | Unreleased  | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | **pending** — SDK 0.3.0 is not published and contract `v1.3.0` is not tagged yet; fill in the tag and commit the SDK 0.3.0 release records before cutting a CLI release |
 
