@@ -31,7 +31,7 @@
     "daykeeper": "node --import tsx src/cli.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --import tsx --test test/cli.test.ts test/init.test.ts test/release.test.ts",
+    "test": "node --import tsx --test test/cli.test.ts test/claim.test.ts test/init.test.ts test/release.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "pack:check": "node scripts/verify-package.mjs",
@@ -56,7 +56,7 @@
   },
   "homepage": "https://github.com/SkyPorch/daykeeper-cli#readme",
   "dependencies": {
-    "@skyporch/daykeeper": "0.2.0",
+    "@skyporch/daykeeper": "0.3.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

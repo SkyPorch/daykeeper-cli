@@ -112,7 +112,7 @@ test("help and version are deterministic JSON and never read credentials or stdi
   assert.equal(first.exitCode, 0);
   assert.equal(first.requests.length, 0);
   assert.equal(reads, 0);
-  assert.equal(first.envelope.data.commands.length, 17);
+  assert.equal(first.envelope.data.commands.length, 19);
   const version = await invoke(["--version"], { env: {} });
   assert.deepEqual(version.envelope.data, {
     name: "@skyporch/daykeeper-cli",
@@ -282,9 +282,15 @@ test("the command catalog and tested SDK dispatch matrix remain identical", () =
     commandCatalog()
       .map((command) => command.name)
       .sort(),
-    // `init` is the one command that is not a single SDK call; its whole
-    // contract is exercised in test/init.test.ts.
-    [...cases.map((fixture) => fixture.command), "init"].sort(),
+    // `init` and the two `claim` forms are the commands that are not a single
+    // SDK call under a supplied token; their whole contracts are exercised in
+    // test/init.test.ts and test/claim.test.ts.
+    [
+      ...cases.map((fixture) => fixture.command),
+      "init",
+      "claim",
+      "claim status",
+    ].sort(),
   );
 });
 
@@ -853,7 +859,7 @@ test("manifest pins the inspected public SDK without private or local dependenci
   );
   assert.equal(manifest.version, CLI_VERSION);
   assert.equal(manifest.dependencies["@skyporch/daykeeper"], SDK_VERSION);
-  assert.equal(SDK_VERSION, "0.2.0");
+  assert.equal(SDK_VERSION, "0.3.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(
     manifest.private,
