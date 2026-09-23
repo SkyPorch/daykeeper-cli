@@ -2,11 +2,96 @@
 
 A command line for people, agents, and CI jobs managing Daykeeper. It calls the
 `@skyporch/daykeeper@0.3.0` SDK and returns one versioned JSON envelope
-per invocation. It does not depend on a private application or workspace package.
+per invocation. The code is Apache-2.0; see [LICENSE](LICENSE) and
+[RELEASING.md](RELEASING.md).
 
-This is an **unpublished foundation** for `@skyporch/daykeeper-cli`. The package
-is marked private until its bootstrap release is reviewed and approved. The code
-is Apache-2.0; see [LICENSE](LICENSE) and [RELEASING.md](RELEASING.md).
+## Get a support inbox with one command
+
+```sh
+npx @skyporch/daykeeper-cli init --name "Acme Support"
+```
+
+That's it. No sign-up, card, website, or DNS. `init` enrolls a machine owner,
+creates a Free workspace with one API inbox, waits for it to be ready, turns it
+on, and stores the credential under `~/.config/daykeeper` (directory mode
+`0700`, file mode `0600`). It prints the workspace and inbox IDs, the next steps,
+and ready-to-paste SDK and MCP configuration. Run it again and it picks up where
+it stopped; it never creates a second workspace, credential, or inbox.
+
+Run in a terminal, `init` prints readable text. Add `--json`, or capture stdout
+from an agent or script, for the JSON envelope.
+
+Every other command then uses the stored credential, with nothing to export:
+
+```sh
+npx @skyporch/daykeeper-cli tenants list
+```
+
+Hand the workspace to a person:
+
+```sh
+npx @skyporch/daykeeper-cli claim --email you@company.com
+```
+
+`claim` issues an owner invitation for that address and prints the link that
+accepts it. Send the link to that person; they sign in at
+https://app.mydaykeeper.com and own the workspace. The link carries its token in
+the URL fragment and is printed unredacted, once, because it is the handoff —
+treat it like a password reset link. It is never written to the state file.
+Rerunning returns the pending claim without a link; `--reissue` revokes it and
+issues a new one, and `claim status` lists what the server holds.
+
+Install it globally to type `daykeeper` instead of `npx @skyporch/daykeeper-cli`:
+
+```sh
+npm install --global @skyporch/daykeeper-cli
+daykeeper tenants list
+```
+
+The credential is redacted from output unless you pass `--reveal-key`, but
+`<home>/mcp.json` always carries the literal credential so an MCP client can
+read it. Full flags, state layout, resume behavior, and error codes are in
+[COMMANDS.md](COMMANDS.md).
+
+## Authenticate
+
+Each command uses the first credential it finds:
+
+1. `--token-stdin`, with the token piped from a trusted credential provider.
+2. `DAYKEEPER_API_KEY`, injected by your secret manager or CI environment.
+   `DAYKEEPER_ACCESS_TOKEN` still works as a deprecated alias.
+3. The credential `init` stored in `<home>/credentials.json`.
+
+Set at most one of the first two. A supplied credential goes to `--base-url`,
+then `DAYKEEPER_API_URL`, then `https://api.mydaykeeper.com`. Include any
+reverse-proxy prefix in the URL. Remote origins must use HTTPS;
+`http://127.0.0.1` and `http://localhost` are supported for local development.
+URLs with credentials, query strings, or fragments are rejected, and requests
+never follow redirects.
+
+The stored credential is only ever sent to the origin that issued it. If you ran
+`init` with `--origin` or `DAYKEEPER_ORIGIN`, set the same origin for later
+commands; a different one fails with `STATE_ORIGIN_MISMATCH` before any request.
+Use `--home` or `DAYKEEPER_HOME` to point at a state file outside the default
+location. A stored credential near expiry is rotated before it is used.
+
+`init` and `claim` always run under the stored credential. They refuse
+`--token-stdin`, and a supplied `DAYKEEPER_API_KEY` that is not the stored one.
+
+```sh
+# DAYKEEPER_API_KEY is supplied by your environment.
+daykeeper capabilities
+
+# A credential provider can pipe the token instead.
+credential-provider print-daykeeper-api-key | daykeeper capabilities --token-stdin
+```
+
+The credential provider above represents your existing secret-management
+command, not a bundled Daykeeper command. Tenant IDs select resources; they do
+not grant access or change the token's organization. The API remains responsible
+for verifying credentials, scopes, and tenant membership. Tokens must be
+20–16,384 bearer characters. The CLI accepts no token argument and never opens
+an interactive sign-in prompt.
 
 ## Run from this repository
 
@@ -18,90 +103,18 @@ pnpm build
 node dist/cli.js --help
 ```
 
-`pnpm daykeeper --help` runs the same CLI from source. The examples below use
-`node dist/cli.js`; the package's executable will be `daykeeper` after an
-approved publication. Do not assume this CLI is available from npm yet.
-
-## Quickstart
-
-One command gives an agent a working support inbox with no console login:
-
-```sh
-node dist/cli.js init --name "Acme Support" --plan free --origin https://your-daykeeper-origin.example --json
-```
-
-`init` enrolls a machine owner, stores the credential under
-`~/.config/daykeeper` (mode `0700`, file mode `0600`), creates a Free workspace
-with one API inbox, waits for provisioning, activates the inbox, and prints the
-identifiers with ready-to-paste SDK and MCP configuration. Run it again and it
-resumes from wherever it stopped; it never creates a second workspace,
-credential, or inbox.
-
-Hand that workspace to a person with one more command:
-
-```sh
-node dist/cli.js claim --email gabriel@acme.example --origin https://your-daykeeper-origin.example
-```
-
-`claim` issues an owner invitation for that address and prints the link that
-accepts it. The link carries its token in the URL fragment and is printed
-unredacted, once, because it is the handoff — treat it like a password reset
-link. It is never written to the state file. Rerunning returns the pending claim
-without a link; `--reissue` revokes it and issues a new one, and `claim status`
-lists what the server holds. See [COMMANDS.md](COMMANDS.md).
-
-`init` talks to the hosted Daykeeper at `https://api.mydaykeeper.com` unless
-you pass `--origin` or set `DAYKEEPER_ORIGIN`. The
-credential is redacted from output unless you pass `--reveal-key`, but
-`<home>/mcp.json` always carries the literal credential so an MCP client can
-read it. `init` refuses `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN`, because it
-mints its own credential and must not run under someone else's. Full flags,
-state layout, resume behavior, and error codes are in
-[COMMANDS.md](COMMANDS.md).
-
-## Authenticate
-
-`init` is the only command that stores a credential, and `claim` is the only
-other command that uses it. Every other command takes one you supply. Set `DAYKEEPER_API_URL` to your intended management API origin, including any
-reverse-proxy prefix. There is no default production endpoint. Remote origins
-must use HTTPS; `http://127.0.0.1` and `http://localhost` are supported for local
-development. URLs with credentials, query strings, or fragments are rejected,
-and requests never follow redirects.
-
-Supply a scoped access token using one of these sources:
-
-- `DAYKEEPER_ACCESS_TOKEN`, injected by your secret manager or CI environment.
-- `--token-stdin`, with the token piped from a trusted credential provider.
-
-Use exactly one source. Outside `init` and `claim`, the CLI accepts no token argument,
-stores no credential, and never opens an interactive sign-in prompt. Tokens must be 20–16,384 bearer
-characters. It uses the supplied token for one request and does not attempt a
-credential refresh after a `401`.
-
-```sh
-# DAYKEEPER_API_URL and DAYKEEPER_ACCESS_TOKEN are supplied by your environment.
-node dist/cli.js capabilities
-node dist/cli.js tenants list
-
-# With DAYKEEPER_ACCESS_TOKEN unset, a credential provider can pipe the token.
-credential-provider print-daykeeper-access-token | node dist/cli.js capabilities --token-stdin
-```
-
-The credential provider above represents your existing secret-management
-command, not a bundled Daykeeper command. Tenant IDs select resources; they do
-not grant access or change the token's organization. The API remains responsible
-for verifying credentials, scopes, and tenant membership.
+`pnpm daykeeper --help` runs the same CLI from source.
 
 ## Plan, inspect, then apply
 
 ```sh
-node dist/cli.js tenants plan --input tenant.json > tenant-plan.json
+daykeeper tenants plan --input tenant.json > tenant-plan.json
 
 # Inspect the returned changes, warnings, requiredScopes, version, and expiry.
 jq '.data' tenant-plan.json
 
 # Apply only when approved, using the exact plan and a durable key for this action.
-node dist/cli.js tenants apply \
+daykeeper tenants apply \
   --plan-id 33333333-3333-4333-8333-333333333333 \
   --plan-version 1 \
   --idempotency-key daykeeper-acme-tenant-create-0001
@@ -123,8 +136,9 @@ command catalog as JSON without making a request.
 
 ## Errors, cancellation, and safe retries
 
-Every result is one JSON line on stdout; `--json` is accepted for compatibility
-but JSON is already the default. There are no prompts or progress messages.
+Every result is one JSON line on stdout. The one exception is `init` run in a
+terminal without `--json`, which prints readable text. There are no prompts or
+progress messages.
 Exit status is `0` for success and `1` for a command error. The executable uses
 `130` for SIGINT and `143` for SIGTERM after emitting a cancellation error.
 

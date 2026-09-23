@@ -36,11 +36,15 @@ stateless as documented in `COMMANDS.md`; that rule is revised, not removed.
 | `--home <dir>`                                    | no       | Where state lives. Default: `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`.                                            |
 | `--wait-ms <n>`                                   | no       | Budget for provisioning polling and rate-limit sleeps, 10000 to 900000. Default 300000. It does not bound request time; `--timeout-ms` does.            |
 | `--reveal-key`                                    | no       | Include the literal server key in the JSON output. Off by default; see Secrets.                                                                         |
-| `--json`                                          | no       | Accepted for symmetry with the documented command. Output is always JSON.                                                                               |
+| `--json`                                          | no       | Print the JSON envelope even when stdout is a terminal. Without a terminal, output is always JSON. (0.3.0)                                              |
 
-Global `--timeout-ms` applies per request. `--token-stdin` and
-`DAYKEEPER_ACCESS_TOKEN` are rejected with `INVALID_ARGUMENT`: `init` creates
-its own credential and must not be run under someone else's.
+Global `--timeout-ms` applies per request. `--token-stdin` is rejected with
+`INVALID_ARGUMENT`, and so is a `DAYKEEPER_API_KEY` (or the deprecated
+`DAYKEEPER_ACCESS_TOKEN`) that is not the credential already stored: `init`
+creates its own credential and must not be run under someone else's.
+
+Since 0.3.0, every other command also uses the stored credential when none is
+supplied, pinned to the same origins; see "Authentication" in `COMMANDS.md`.
 
 The built-in hosted origins are two constants in `src/constants.ts`:
 `https://api.mydaykeeper.com` serves the management API and machine onboarding,

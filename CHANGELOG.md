@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+## 0.3.0 (unreleased)
+
+Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.
+Not published yet.
+
+### Changed
+
+- Every command now works right after `init` with nothing exported. Without a
+  supplied credential, a command loads the one `init` stored in
+  `<home>/credentials.json` and sends it only to the API it was issued for.
+  The same origin pinning as `init` and `claim` applies: a run that resolves a
+  different origin fails with `STATE_ORIGIN_MISMATCH` before any request. A
+  stored credential inside its last day is rotated first, as `claim` does.
+- `DAYKEEPER_API_KEY` is the canonical environment variable, matching what
+  `init` prints and what the MCP config uses. `DAYKEEPER_ACCESS_TOKEN` still
+  works as a deprecated alias and adds a `DEPRECATED_ENVIRONMENT_VARIABLE`
+  entry to the envelope's new `warnings` array. The two set to different values
+  fail with `AUTH_SOURCE_CONFLICT`. A supplied key or `--token-stdin` overrides
+  the stored credential.
+- The management API defaults to `https://api.mydaykeeper.com`.
+  `--base-url` and `DAYKEEPER_API_URL` still override it, so
+  `CONFIGURATION_REQUIRED` is no longer returned for a missing API URL. A
+  missing credential now returns `AUTH_REQUIRED` with
+  `nextActions: ["run_init"]`.
+- `--home` is a global option, so every command can find a state file `init`
+  wrote somewhere other than the default.
+- `init` and `claim` accept a supplied `DAYKEEPER_API_KEY` (or the alias) only
+  when it is the stored credential itself, so exporting what `init` printed no
+  longer blocks `claim`. Any other supplied key is still refused.
+
+### Added
+
+- `init` output carries `workspaceId`, `inboxId`, `consoleUrl` (the hosted
+  console, or `null` for a self-hosted origin), and `nextSteps`: claim the
+  workspace for a person, open the console, and run another command.
+- `init` run by a person in a terminal prints readable text with the same next
+  steps. Pass `--json`, or run it without a terminal on stdout, for the JSON
+  envelope; agents and scripts are unaffected. Text is rendered from the
+  redacted envelope, so it never shows more than JSON would.
+
 ## 0.2.0 (2026-09-10)
 
 Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -59,7 +61,7 @@ async function invoke(args: string[], options: InvocationOptions = {}) {
   const lines: string[] = [];
   const exitCode = await runCli(args, {
     env: options.env ?? {
-      DAYKEEPER_ACCESS_TOKEN: TOKEN,
+      DAYKEEPER_API_KEY: TOKEN,
       DAYKEEPER_API_URL: BASE_URL,
     },
     stdin:
@@ -494,11 +496,18 @@ test("the input boundary rejects invalid UTF-8 and oversized JSON", async () => 
   assert.equal(large.requests.length, 0);
 });
 
-test("authentication requires exactly one non-persisted source", async () => {
+/** An empty home, so a test never reads the real stored credential. */
+async function emptyHome() {
+  return mkdtemp(join(tmpdir(), "daykeeper-cli-empty-"));
+}
+
+test("authentication accepts at most one supplied source and names init when none exists", async () => {
   const missing = await invoke(["capabilities"], {
-    env: { DAYKEEPER_API_URL: BASE_URL },
+    env: { DAYKEEPER_API_URL: BASE_URL, DAYKEEPER_HOME: await emptyHome() },
   });
   assert.equal(missing.envelope.error.code, "AUTH_REQUIRED");
+  assert.deepEqual(missing.envelope.error.nextActions, ["run_init"]);
+  assert.equal(missing.requests.length, 0);
   const conflict = await invoke(["capabilities", "--token-stdin"], {
     input: TOKEN,
   });
@@ -519,11 +528,57 @@ test("authentication requires exactly one non-persisted source", async () => {
   assert.equal(both.envelope.error.code, "STDIN_CONFLICT");
   for (const token of ["short", `${TOKEN}\nheader`, "x".repeat(16385)]) {
     const result = await invoke(["capabilities"], {
-      env: { DAYKEEPER_API_URL: BASE_URL, DAYKEEPER_ACCESS_TOKEN: token },
+      env: { DAYKEEPER_API_URL: BASE_URL, DAYKEEPER_API_KEY: token },
     });
     assert.equal(result.envelope.error.code, "INVALID_ACCESS_TOKEN");
     assert.equal(result.requests.length, 0);
   }
+});
+
+test("DAYKEEPER_ACCESS_TOKEN still works as a deprecated alias for DAYKEEPER_API_KEY", async () => {
+  const legacy = await invoke(["capabilities"], {
+    env: { DAYKEEPER_API_URL: BASE_URL, DAYKEEPER_ACCESS_TOKEN: TOKEN },
+  });
+  assert.equal(legacy.exitCode, 0, legacy.output);
+  assert.equal(
+    legacy.requests[0]!.headers.get("authorization"),
+    `Bearer ${TOKEN}`,
+  );
+  assert.deepEqual(
+    legacy.envelope.warnings.map((warning: { code: string }) => warning.code),
+    ["DEPRECATED_ENVIRONMENT_VARIABLE"],
+  );
+
+  const canonical = await invoke(["capabilities"]);
+  assert.equal(canonical.envelope.warnings, undefined);
+
+  const same = await invoke(["capabilities"], {
+    env: {
+      DAYKEEPER_API_URL: BASE_URL,
+      DAYKEEPER_API_KEY: TOKEN,
+      DAYKEEPER_ACCESS_TOKEN: TOKEN,
+    },
+  });
+  assert.equal(same.exitCode, 0, same.output);
+  assert.equal(same.envelope.warnings, undefined);
+
+  const other = "daykeeper_other_test_only_access_token_987";
+  const different = await invoke(["capabilities"], {
+    env: {
+      DAYKEEPER_API_URL: BASE_URL,
+      DAYKEEPER_API_KEY: TOKEN,
+      DAYKEEPER_ACCESS_TOKEN: other,
+    },
+  });
+  assert.equal(different.envelope.error.code, "AUTH_SOURCE_CONFLICT");
+  assert.equal(different.requests.length, 0);
+  assert(!different.output.includes(other));
+
+  const stdinConflict = await invoke(["capabilities", "--token-stdin"], {
+    env: { DAYKEEPER_API_URL: BASE_URL, DAYKEEPER_ACCESS_TOKEN: TOKEN },
+    input: TOKEN,
+  });
+  assert.equal(stdinConflict.envelope.error.code, "AUTH_SOURCE_CONFLICT");
 });
 
 test("stdin token plus a regular JSON file is supported without consuming stdin twice", async () => {
@@ -548,11 +603,15 @@ test("TTY stdin never prompts for JSON or credentials", async () => {
   assert.equal(result.requests.length, 0);
 });
 
-test("the API origin is explicit and unsafe URL components never reach transport", async () => {
+test("the API origin defaults to the hosted API and unsafe URL components never reach transport", async () => {
   const absent = await invoke(["capabilities"], {
-    env: { DAYKEEPER_ACCESS_TOKEN: TOKEN },
+    env: { DAYKEEPER_API_KEY: TOKEN },
   });
-  assert.equal(absent.envelope.error.code, "CONFIGURATION_REQUIRED");
+  assert.equal(absent.exitCode, 0, absent.output);
+  assert.equal(
+    absent.requests[0]!.url,
+    "https://api.mydaykeeper.com/v1/capabilities",
+  );
   for (const baseUrl of [
     "http://api.example.test",
     "https://user:password@api.example.test",

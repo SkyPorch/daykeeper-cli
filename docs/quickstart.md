@@ -5,44 +5,27 @@ The CLI prints exactly one JSON envelope on stdout and never prompts.
 ## Requirements
 
 - Node.js 20 or newer.
-- A scoped Daykeeper access token.
 
 ## Starting from nothing
 
-`daykeeper init` is the one command that needs no credential. It enrolls a
-machine owner, creates a Free workspace with one API inbox, and stores the
-credential locally:
+`init` is the one command that needs no credential. It enrolls a machine owner,
+creates a Free workspace with one API inbox, and stores the credential locally:
 
 ```sh
-daykeeper init --name "Acme Support" --origin https://your-daykeeper-origin.example
+npx @skyporch/daykeeper-cli init --name "Acme Support"
 ```
 
 Rerun it to resume; it never creates a second workspace, credential, or inbox.
-Every command below uses a credential you already have. See `COMMANDS.md` for
-the full `init` contract.
-
-## Configuration
-
-Two environment variables:
-
-| Variable                 | Purpose                                                                          |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| `DAYKEEPER_API_URL`      | Base URL of the Daykeeper management API. Required unless you pass `--base-url`. |
-| `DAYKEEPER_ACCESS_TOKEN` | Scoped access token. Required unless you pass `--token-stdin`.                   |
-| `DAYKEEPER_TIMEOUT_MS`   | Optional. Combined input and request deadline, 1000–60000 ms. Defaults to 30000. |
-
-Set exactly one token source. Supplying both `DAYKEEPER_ACCESS_TOKEN` and
-`--token-stdin` is an error.
+Its output includes the workspace and inbox IDs and the next steps. See
+`COMMANDS.md` for the full `init` contract.
 
 ## One real invocation
 
-List the tenants the token can see:
+Every other command uses the credential `init` stored, so nothing needs
+exporting. List the tenants it can see:
 
 ```sh
-export DAYKEEPER_API_URL="https://api.example.invalid"
-export DAYKEEPER_ACCESS_TOKEN="…"
-
-daykeeper tenants list
+npx @skyporch/daykeeper-cli tenants list
 ```
 
 Successful output is a single envelope:
@@ -56,9 +39,23 @@ Successful output is a single envelope:
 }
 ```
 
-## Keeping the token out of the environment
+## Using a credential you already have
 
-Pipe it on stdin instead, and leave `DAYKEEPER_ACCESS_TOKEN` unset:
+| Variable               | Purpose                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------- |
+| `DAYKEEPER_API_KEY`    | Scoped credential. Overrides the stored one. `DAYKEEPER_ACCESS_TOKEN` is a deprecated alias.      |
+| `DAYKEEPER_API_URL`    | Management API for a supplied credential. Default `https://api.mydaykeeper.com`.                  |
+| `DAYKEEPER_HOME`       | Where `init` stored its state. Default `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`.  |
+| `DAYKEEPER_ORIGIN`     | The origin `init` used, when it was not the hosted one. The stored credential is only sent there. |
+| `DAYKEEPER_TIMEOUT_MS` | Optional. Combined input and request deadline, 1000–60000 ms. Defaults to 30000.                  |
+
+```sh
+export DAYKEEPER_API_KEY="…"
+daykeeper tenants list
+```
+
+To keep the token out of the environment, pipe it on stdin instead and leave
+`DAYKEEPER_API_KEY` unset. Supplying both is an error:
 
 ```sh
 printf '%s' "$(cat token.txt)" | daykeeper tenants list --token-stdin

@@ -27,6 +27,7 @@ async function main() {
         process.stdout.write(line);
       },
       signal: controller.signal,
+      interactive: process.stdout.isTTY === true,
     });
     process.exitCode = controller.signal.aborted ? cancelledExitCode : result;
   } finally {

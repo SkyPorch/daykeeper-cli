@@ -212,6 +212,7 @@ const commands: readonly Command[] = [
 
 const globalOptions = [
   "base-url",
+  "home",
   "timeout-ms",
   "token-stdin",
   "json",

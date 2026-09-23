@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { DaykeeperClient } from "@skyporch/daykeeper";
+import { join } from "node:path";
 import {
   CLI_VERSION,
   ENVELOPE_VERSION,
+  HOSTED_ORIGIN,
   MAX_TOKEN_BYTES,
   SDK_VERSION,
 } from "./constants.ts";
@@ -16,6 +18,10 @@ import {
 } from "./commands.ts";
 import { CliError, errorEnvelope, reportedOutcomeUnknown } from "./errors.ts";
 import { InitStepError, realClock, runInit, type InitClock } from "./init.ts";
+import { renderInitText } from "./human.ts";
+import { resolveOrigins } from "./origins.ts";
+import { STATE_FILE, readState, resolveHome } from "./state.ts";
+import { openStoredCredential } from "./stored.ts";
 
 /** Server admission codes that only the Daykeeper operator can lift. */
 const OPERATOR_GATED_CODES = new Set([
@@ -35,6 +41,41 @@ export interface CliContext {
   signal?: AbortSignal;
   /** Test seam for `init`'s bounded polling and rate-limit waits. */
   clock?: InitClock;
+  /**
+   * True when stdout is a terminal. `init` then prints readable text unless
+   * `--json` is passed; every other caller gets the JSON envelope.
+   */
+  interactive?: boolean;
+}
+
+/** The canonical credential variable and its deprecated alias. */
+const API_KEY_VARIABLE = "DAYKEEPER_API_KEY";
+const LEGACY_TOKEN_VARIABLE = "DAYKEEPER_ACCESS_TOKEN";
+
+interface SuppliedKey {
+  value: string;
+  variable: typeof API_KEY_VARIABLE | typeof LEGACY_TOKEN_VARIABLE;
+}
+
+/**
+ * Read the credential supplied through the environment. `DAYKEEPER_API_KEY`
+ * is canonical; `DAYKEEPER_ACCESS_TOKEN` is still accepted as a deprecated
+ * alias. Two different values are refused rather than ranked.
+ */
+function suppliedKey(
+  env: Readonly<Record<string, string | undefined>>,
+): SuppliedKey | undefined {
+  const canonical = env[API_KEY_VARIABLE] || undefined;
+  const legacy = env[LEGACY_TOKEN_VARIABLE] || undefined;
+  if (canonical && legacy && canonical !== legacy)
+    throw new CliError(
+      "AUTH_SOURCE_CONFLICT",
+      "DAYKEEPER_API_KEY and DAYKEEPER_ACCESS_TOKEN hold different values. Set only DAYKEEPER_API_KEY.",
+      [API_KEY_VARIABLE, LEGACY_TOKEN_VARIABLE],
+    );
+  if (canonical) return { value: canonical, variable: API_KEY_VARIABLE };
+  if (legacy) return { value: legacy, variable: LEGACY_TOKEN_VARIABLE };
+  return undefined;
 }
 
 export async function runCli(
@@ -46,9 +87,17 @@ export async function runCli(
   let exitCode = 0;
   const secrets: string[] = [];
   const revealed = new Map<string, string>();
-  const environmentToken = context.env.DAYKEEPER_ACCESS_TOKEN;
-  if (environmentToken && environmentToken.length >= 20)
-    secrets.push(environmentToken);
+  for (const variable of [API_KEY_VARIABLE, LEGACY_TOKEN_VARIABLE]) {
+    const value = context.env[variable];
+    if (value && value.length >= 20) secrets.push(value);
+  }
+  const warnings: { code: string; message: string }[] = [];
+  if (context.env[LEGACY_TOKEN_VARIABLE] && !context.env[API_KEY_VARIABLE])
+    warnings.push({
+      code: "DEPRECATED_ENVIRONMENT_VARIABLE",
+      message:
+        "DAYKEEPER_ACCESS_TOKEN is deprecated. Set DAYKEEPER_API_KEY instead.",
+    });
   let cleanup = () => {};
   let controller: AbortController | undefined;
   let initFailure: InitStepError | undefined;
@@ -66,11 +115,13 @@ export async function runCli(
           sdkVersion: SDK_VERSION,
           ...(parsed.help
             ? {
-                output: "One JSON envelope on stdout. No interactive prompts.",
+                output:
+                  "One JSON envelope on stdout. init run at a terminal without --json prints readable text instead. No interactive prompts.",
                 authentication:
-                  "DAYKEEPER_ACCESS_TOKEN or --token-stdin; use exactly one source. The server enforces scopes and tenant access. init and claim are the exceptions: init mints and stores its own credential, claim uses the one it stored, and both reject either source.",
+                  "Commands use the credential init stored in <home>/credentials.json against the origin that issued it (https://api.mydaykeeper.com by default). DAYKEEPER_API_KEY or --token-stdin overrides it; use at most one of them. DAYKEEPER_ACCESS_TOKEN is a deprecated alias for DAYKEEPER_API_KEY. The server enforces scopes and tenant access. init and claim always run under the stored credential and refuse a different supplied one.",
                 globalOptions: [
                   "--base-url",
+                  "--home",
                   "--timeout-ms",
                   "--token-stdin",
                   "--json",
@@ -89,13 +140,19 @@ export async function runCli(
       // supplied token, and their own wait budget bounds the run instead of
       // one deadline.
       const name = parsed.command!.name;
-      if (environmentToken)
+      const supplied = suppliedKey(context.env);
+      // A supplied key is only tolerated when it is the stored credential
+      // itself, as it is after exporting the DAYKEEPER_API_KEY init printed.
+      if (
+        supplied &&
+        supplied.value !== (await storedToken(parsed.options, context.env))
+      )
         throw new CliError(
           "INVALID_ARGUMENT",
           name === "init"
-            ? "init creates its own credential; unset DAYKEEPER_ACCESS_TOKEN before running it."
-            : "claim uses the credential init stored; unset DAYKEEPER_ACCESS_TOKEN before running it.",
-          ["DAYKEEPER_ACCESS_TOKEN"],
+            ? `init creates and stores its own credential; unset ${supplied.variable} before running it.`
+            : `claim uses the credential init stored; unset ${supplied.variable} before running it.`,
+          [supplied.variable],
         );
       const timeoutMs = requestTimeoutMs(parsed.options, context.env);
       const transport = context.fetch ?? globalThis.fetch;
@@ -148,24 +205,17 @@ export async function runCli(
       };
     } else {
       const timeoutMs = requestTimeoutMs(parsed.options, context.env);
-      const baseUrl =
-        parsed.options["base-url"] ?? context.env.DAYKEEPER_API_URL;
-      if (typeof baseUrl !== "string" || !baseUrl)
-        throw new CliError(
-          "CONFIGURATION_REQUIRED",
-          "Set DAYKEEPER_API_URL or --base-url to the intended Daykeeper management API.",
-          ["base-url"],
-        );
-      if (parsed.options["token-stdin"] && environmentToken)
+      const supplied = suppliedKey(context.env);
+      if (parsed.options["token-stdin"] && supplied)
         throw new CliError(
           "AUTH_SOURCE_CONFLICT",
-          "Use either DAYKEEPER_ACCESS_TOKEN or --token-stdin, not both.",
+          `Use either ${supplied.variable} or --token-stdin, not both.`,
         );
-      if (!parsed.options["token-stdin"] && !environmentToken)
-        throw new CliError(
-          "AUTH_REQUIRED",
-          "Supply a scoped access token through DAYKEEPER_ACCESS_TOKEN or --token-stdin.",
-        );
+      // With no supplied credential, the one init stored is used against the
+      // origins it was issued for; otherwise the hosted API is the default.
+      const suppliedBaseUrl =
+        textOption(parsed.options["base-url"]) ??
+        (context.env.DAYKEEPER_API_URL || HOSTED_ORIGIN);
 
       controller = new AbortController();
       const active = controller;
@@ -198,7 +248,9 @@ export async function runCli(
       };
       assertActive();
       const command = parsed;
+      const transport = context.fetch ?? globalThis.fetch;
       const task = async () => {
+        let baseUrl = suppliedBaseUrl;
         const token = command.options["token-stdin"]
           ? (
               await readBounded(
@@ -207,7 +259,60 @@ export async function runCli(
                 active.signal,
               )
             ).trim()
-          : environmentToken!;
+          : supplied
+            ? supplied.value
+            : await storedCredential();
+        async function storedCredential(): Promise<string> {
+          const stored = await openStoredCredential(
+            {
+              // A rotation is not the command's own request, so it
+              // never marks the command's mutation as sent.
+              fetch: (url, options) => {
+                assertActive();
+                return transport(url, {
+                  ...options,
+                  signal: linkSignals(
+                    options?.signal ?? undefined,
+                    active.signal,
+                  ),
+                  redirect: "error",
+                  credentials: "omit",
+                });
+              },
+              signal: active.signal,
+              timeoutMs,
+              clock: context.clock ?? realClock,
+              addSecret: (secret) => {
+                if (secret) secrets.push(secret);
+              },
+            },
+            {
+              home: resolveHome(textOption(command.options.home), context.env),
+              origins: () => resolveOrigins(command.options, context.env),
+              waitMs: timeoutMs,
+              rateLimited: () =>
+                new CliError(
+                  "RATE_LIMITED",
+                  "Daykeeper rate-limited the credential refresh. Run the command again.",
+                  [],
+                  true,
+                ),
+              missing: () =>
+                new CliError(
+                  "AUTH_REQUIRED",
+                  "No Daykeeper credential was found. Run init to create one, or supply DAYKEEPER_API_KEY or --token-stdin.",
+                  ["home"],
+                  false,
+                  ["run_init"],
+                ),
+              unenrolled:
+                "The Daykeeper state file has no enrolled workspace. Run init again, or supply DAYKEEPER_API_KEY or --token-stdin.",
+            },
+          );
+          // The stored credential only ever talks to the API that issued it.
+          baseUrl = stored.origins.apiUrl;
+          return stored.token;
+        }
         if (
           token.length < 20 ||
           token.length > MAX_TOKEN_BYTES ||
@@ -230,7 +335,6 @@ export async function runCli(
             )
           : undefined;
         assertActive();
-        const transport = context.fetch ?? globalThis.fetch;
         const fetch: typeof globalThis.fetch = async (url, options) => {
           assertActive();
           requestSent = true;
@@ -359,6 +463,7 @@ export async function runCli(
       );
     }
   }
+  if (warnings.length) envelope = { ...envelope, warnings };
   let output = JSON.stringify(envelope);
   for (const secret of new Set(secrets)) {
     const escaped = JSON.stringify(secret).slice(1, -1);
@@ -371,8 +476,37 @@ export async function runCli(
       .split(placeholder)
       .join(JSON.stringify(secret).slice(1, -1));
   }
+  if (
+    context.interactive &&
+    parsed?.command?.name === "init" &&
+    parsed.options.json !== true
+  ) {
+    // Rendered from the already-redacted envelope, so text mode can never
+    // print more than JSON mode would.
+    context.write(renderInitText(JSON.parse(output)));
+    return exitCode;
+  }
   context.write(`${output}\n`);
   return exitCode;
+}
+
+function textOption(value: string | boolean | undefined): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/** The token `init` stored, or undefined when there is none or it is unreadable. */
+async function storedToken(
+  options: Readonly<Record<string, string | boolean | undefined>>,
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<string | undefined> {
+  try {
+    const state = await readState(
+      join(resolveHome(textOption(options.home), env), STATE_FILE),
+    );
+    return state?.credential?.token ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function requestTimeoutMs(

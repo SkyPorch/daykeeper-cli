@@ -8,6 +8,9 @@ import {
   type MachineEnrollmentInput,
 } from "@skyporch/daykeeper";
 import {
+  CLI_INVOCATION,
+  HOSTED_CONSOLE_URL,
+  HOSTED_ORIGIN,
   MCP_PACKAGE,
   REACT_NATIVE_PACKAGE,
   SDK_PACKAGE,
@@ -90,6 +93,8 @@ interface InitArguments extends Origins {
   slug: string | undefined;
   locale: string;
   home: string;
+  /** The `--home` the caller passed, repeated in the printed next steps. */
+  homeOption: string | undefined;
   waitMs: number;
   revealKey: boolean;
 }
@@ -454,7 +459,46 @@ async function execute(
     `${JSON.stringify({ mcpServers: mcpServers(args.apiUrl, literalKey) }, null, 2)}\n`,
   );
 
+  // The console only exists for the hosted origin; a self-hosted origin serves
+  // its own, which this command cannot know.
+  const consoleUrl = args.origin === HOSTED_ORIGIN ? HOSTED_CONSOLE_URL : null;
+  const followUp = [
+    ...(args.origin === HOSTED_ORIGIN ? [] : [`--origin ${args.origin}`]),
+    ...(args.homeOption ? [`--home ${JSON.stringify(args.homeOption)}`] : []),
+  ].join(" ");
+  const withFollowUp = (command: string) =>
+    followUp ? `${command} ${followUp}` : command;
+
   return {
+    workspaceId: workspace.organizationId,
+    inboxId: tenantId,
+    consoleUrl,
+    nextSteps: [
+      {
+        action: "claim_workspace",
+        description:
+          "Give a person owner access to this workspace. The command prints a link to send them.",
+        command: withFollowUp(
+          `${CLI_INVOCATION} claim --email you@company.com`,
+        ),
+      },
+      ...(consoleUrl
+        ? [
+            {
+              action: "open_console",
+              description:
+                "Sign in to the console to see the inbox and add website or email channels.",
+              url: consoleUrl,
+            },
+          ]
+        : []),
+      {
+        action: "run_commands",
+        description:
+          "Other commands use the stored credential, so nothing needs exporting.",
+        command: withFollowUp(`${CLI_INVOCATION} tenants list`),
+      },
+    ],
     workspace: {
       organizationId: workspace.organizationId,
       slug: workspace.organizationSlug,
@@ -605,6 +649,7 @@ function parseInitArguments(
     slug,
     locale,
     home: resolveHome(text(options.home), env),
+    homeOption: text(options.home),
     waitMs,
     revealKey: options["reveal-key"] === true,
     ...resolveOrigins(options, env),
