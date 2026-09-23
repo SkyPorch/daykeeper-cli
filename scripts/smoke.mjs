@@ -53,9 +53,13 @@ export async function verifyExecutable(bin) {
   assert.equal(help.envelope.data.commands.length, 19);
   const version = await call(bin, ["--version"]);
   assert.equal(version.envelope.data.sdkVersion, "0.3.0");
+  // An empty home, so the smoke never picks up a real stored credential.
+  const emptyHome = await mkdtemp(join(tmpdir(), "daykeeper-cli-smoke-empty-"));
   const missingAuth = await call(bin, ["capabilities"], {
     DAYKEEPER_API_URL: "https://example.test",
+    DAYKEEPER_HOME: emptyHome,
   });
+  await rm(emptyHome, { recursive: true, force: true });
   assert.equal(missingAuth.exitCode, 1);
   assert.equal(missingAuth.envelope.error.code, "AUTH_REQUIRED");
 
@@ -86,7 +90,7 @@ export async function verifyExecutable(bin) {
         "--home",
         home,
       ],
-      { DAYKEEPER_ACCESS_TOKEN: TEST_TOKEN },
+      { DAYKEEPER_API_KEY: TEST_TOKEN },
     );
     assert.equal(suppliedToken.exitCode, 1);
     assert.equal(suppliedToken.envelope.error.code, "INVALID_ARGUMENT");
@@ -146,7 +150,7 @@ export async function verifyExecutable(bin) {
     assert(address && typeof address !== "string");
     const environment = {
       DAYKEEPER_API_URL: `http://127.0.0.1:${address.port}/proxy`,
-      DAYKEEPER_ACCESS_TOKEN: TEST_TOKEN,
+      DAYKEEPER_API_KEY: TEST_TOKEN,
     };
     const permitted = await call(
       bin,

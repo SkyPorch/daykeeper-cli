@@ -1,6 +1,6 @@
 # Daykeeper CLI command contract
 
-Envelope version: `daykeeper.cli.v1`. CLI foundation: `0.1.0`. Runtime management
+Envelope version: `daykeeper.cli.v1`. CLI: `0.3.0`. Runtime management
 SDK: `@skyporch/daykeeper@0.3.0`.
 
 ## Commands
@@ -8,9 +8,9 @@ SDK: `@skyporch/daykeeper@0.3.0`.
 `init` and `claim` are described in their own sections below: they are the
 commands that make several SDK calls and the commands that persist state, and
 both run under the credential `init` mints rather than a supplied one. Every
-other network command requires an explicit API base URL and one scoped access
-token, and calls exactly one SDK method. Scope names below are required by the
-API, not permissions granted by a CLI option.
+other network command calls exactly one SDK method, under the credential
+described in [Authentication](#authentication). Scope names below are required
+by the API, not permissions granted by a CLI option.
 
 | Command                  | Required flags                                                               | Optional flags | API scope                      | Effect                                        |
 | ------------------------ | ---------------------------------------------------------------------------- | -------------- | ------------------------------ | --------------------------------------------- |
@@ -40,14 +40,48 @@ duplicate, missing, or irrelevant options are errors. `--help` returns the full
 catalog, or a single command's catalog when supplied with its command name.
 `daykeeper --version` returns the CLI and SDK versions without authentication.
 
-Global options are `--base-url`, `--timeout-ms`, `--token-stdin`, `--json`, and
-`--help`. `DAYKEEPER_API_URL`, `DAYKEEPER_ACCESS_TOKEN`, and
-`DAYKEEPER_TIMEOUT_MS` are the configuration environment variables every command
-reads; `init` and `claim` additionally read `DAYKEEPER_ORIGIN`,
-`DAYKEEPER_ONBOARDING_URL`, `DAYKEEPER_GATEWAY_URL`, `DAYKEEPER_HOME`, and
-`XDG_CONFIG_HOME`. Explicit flags override their environment values. Apart from
-the files `init` writes under its own home, there are no config files, saved
-profiles, token arguments, or interactive prompts.
+Global options are `--base-url`, `--home`, `--timeout-ms`, `--token-stdin`,
+`--json`, and `--help`. `DAYKEEPER_API_URL`, `DAYKEEPER_API_KEY`,
+`DAYKEEPER_HOME`, `XDG_CONFIG_HOME`, and `DAYKEEPER_TIMEOUT_MS` are the
+configuration environment variables every command reads; `DAYKEEPER_ORIGIN`,
+`DAYKEEPER_ONBOARDING_URL`, and `DAYKEEPER_GATEWAY_URL` set the origins a stored
+credential is checked against. Explicit flags override their environment
+values. Apart from the files `init` writes under its own home, there are no
+config files, saved profiles, token arguments, or interactive prompts.
+
+## Authentication
+
+Each command other than `init` and `claim` takes its credential from the first
+of these that is present:
+
+1. `--token-stdin`, with the token piped from a trusted credential provider.
+2. `DAYKEEPER_API_KEY`. `DAYKEEPER_ACCESS_TOKEN` is a deprecated alias: it still
+   works and adds a `DEPRECATED_ENVIRONMENT_VARIABLE` entry to the envelope's
+   `warnings` array. Both set to different values fail with
+   `AUTH_SOURCE_CONFLICT`, as does either one together with `--token-stdin`.
+3. The credential `init` stored in `<home>/credentials.json`.
+
+A supplied credential goes to `--base-url`, then `DAYKEEPER_API_URL`. Without
+either, the stored credential goes to the origin that issued it, and any other
+key goes to the hosted `https://api.mydaykeeper.com` only when there is no state
+file or the state is for the hosted origin; otherwise the command fails with
+`CONFIGURATION_REQUIRED` rather than send a key to a guessed origin. The stored
+credential with an explicit URL on another origin fails with
+`STATE_ORIGIN_MISMATCH`. The stored credential is pinned exactly as
+it is for `init` and `claim`: the origins resolve the same way (flags, then their
+environment variables, then `DAYKEEPER_ORIGIN`, then the hosted origins), and a
+run that resolves a different one fails with `STATE_ORIGIN_MISMATCH` before any
+request. After `init` against the hosted origin, nothing needs to be set:
+
+```sh
+npx @skyporch/daykeeper-cli init --name "Acme Support"
+npx @skyporch/daykeeper-cli tenants list
+```
+
+A stored credential inside its last 24 hours is rotated before it is used,
+through the same path `init` uses. With no supplied credential and no state
+file, a command fails with `AUTH_REQUIRED` and `nextActions: ["run_init"]`; a
+state file with no enrolled workspace fails with `INIT_REQUIRED`.
 
 ## `init`
 
@@ -73,12 +107,14 @@ daykeeper init --name "Acme Support" --plan free --json
 | `--home <dir>`                                    | no       | Where state lives. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`. |
 | `--wait-ms <n>`                                   | no       | Budget for provisioning polling and rate-limit sleeps, 10000–900000. Default 300000.                    |
 | `--reveal-key`                                    | no       | Print the literal credential in the JSON output. Off by default.                                        |
+| `--json`                                          | no       | Print the JSON envelope even when stdout is a terminal.                                                 |
 
 `--timeout-ms` applies per request; `--wait-ms` bounds provisioning polling and
 rate-limit sleeps only, not the run's total duration and not any single request.
-`--token-stdin` and `DAYKEEPER_ACCESS_TOKEN` are rejected with
-`INVALID_ARGUMENT`: `init` creates its own credential and must not run under
-someone else's. Without `--origin` or `DAYKEEPER_ORIGIN`, `init` uses the hosted
+`--token-stdin` is rejected with `INVALID_ARGUMENT`, and so is a
+`DAYKEEPER_API_KEY` (or `DAYKEEPER_ACCESS_TOKEN`) that is not the credential
+already stored in `<home>`: `init` creates its own credential and must not run
+under someone else's. Exporting the key `init` printed does not block a rerun. Without `--origin` or `DAYKEEPER_ORIGIN`, `init` uses the hosted
 `https://api.mydaykeeper.com` for the API and machine onboarding and
 `https://gateway.mydaykeeper.com` for the customer gateway. A custom origin
 pairs with itself as the gateway unless `--gateway-url` is given.
@@ -144,8 +180,34 @@ does, that delay follows the header like the onboarding ones.
 
 ### Output
 
+When stdout is a terminal and `--json` is not passed, `init` prints readable
+text: the workspace, inbox, API, and file locations, then the next steps below.
+It is rendered from the redacted envelope, so it never shows more than the JSON.
+Everywhere else, including every agent or script that captures stdout, `init`
+prints this envelope's `data`:
+
 ```json
 {
+  "workspaceId": "…",
+  "inboxId": "…",
+  "consoleUrl": "https://app.mydaykeeper.com",
+  "nextSteps": [
+    {
+      "action": "claim_workspace",
+      "description": "Give a person owner access to this workspace. The command prints a link to send them.",
+      "command": "npx @skyporch/daykeeper-cli claim --email you@company.com"
+    },
+    {
+      "action": "open_console",
+      "description": "Sign in to the console to see the inbox and add website or email channels.",
+      "url": "https://app.mydaykeeper.com"
+    },
+    {
+      "action": "run_commands",
+      "description": "Other commands use the stored credential, so nothing needs exporting.",
+      "command": "npx @skyporch/daykeeper-cli tenants list"
+    }
+  ],
   "workspace": {
     "organizationId": "…",
     "slug": "…",
@@ -204,6 +266,11 @@ does, that delay follows the header like the onboarding ones.
 }
 ```
 
+`workspaceId` is `workspace.organizationId` and `inboxId` is `inbox.tenantId`.
+`consoleUrl` is `null`, and `open_console` is left out, for a self-hosted
+origin. The next-step commands repeat `--origin` and `--home` when the run used
+a non-hosted origin or an explicit `--home`, so they work when copied as-is.
+
 The credential is redacted from output unless `--reveal-key` is supplied, and
 the machine owner private key is redacted unconditionally. `mcp.json` on disk
 carries the literal credential either way. With `--reveal-key`, both
@@ -245,8 +312,9 @@ daykeeper claim status
 | `--json`                                          | no       | Accepted for symmetry. Output is always JSON.                                                          |
 
 `claim` reads the state file `init` wrote and runs under the credential stored
-there. Like `init`, it refuses `--token-stdin` and `DAYKEEPER_ACCESS_TOKEN`
-rather than silently ignoring them, and it refuses to send a stored credential
+there. Like `init`, it refuses `--token-stdin`, and a `DAYKEEPER_API_KEY` or
+`DAYKEEPER_ACCESS_TOKEN` that is not the stored credential, rather than
+silently ignoring them, and it refuses to send a stored credential
 to an origin that did not issue it: a resolved origin that differs from the
 pinned one fails with `STATE_ORIGIN_MISMATCH` before any request. A missing or
 un-enrolled state file fails with `INIT_REQUIRED`; an unreadable or

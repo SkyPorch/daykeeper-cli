@@ -1377,3 +1377,399 @@ async function seedState(
     { mode: 0o600 },
   );
 }
+
+/** Run any command the way a caller would right after init, with no token. */
+async function run(
+  args: string[],
+  server: Fixture,
+  env: Record<string, string | undefined> = {},
+  extra: Partial<CliContext> = {},
+) {
+  const lines: string[] = [];
+  const exitCode = await runCli(args, {
+    env,
+    stdin: Readable.from([]),
+    write: (line) => lines.push(line),
+    fetch: server.fetch,
+    clock: fakeClock().clock,
+    ...extra,
+  });
+  assert.equal(lines.length, 1);
+  return { exitCode, output: lines[0]! };
+}
+
+test("init names the workspace, the inbox, and what to do next", async () => {
+  const directory = await home();
+  const custom = await init({ home: directory, fixture: fixture() });
+  assert.equal(custom.exitCode, 0, custom.output);
+  const data = custom.envelope.data;
+  assert.equal(data.workspaceId, ORGANIZATION);
+  assert.equal(data.inboxId, TENANT);
+  // A self-hosted origin has no known console, and every follow-up command
+  // must repeat the origin and home it needs to find the stored credential.
+  assert.equal(data.consoleUrl, null);
+  assert.deepEqual(
+    data.nextSteps.map((step: { action: string }) => step.action),
+    ["claim_workspace", "run_commands"],
+  );
+  assert.equal(
+    data.nextSteps[0].command,
+    `npx @skyporch/daykeeper-cli claim --email you@company.com --origin ${ORIGIN} --home ${JSON.stringify(directory)}`,
+  );
+
+  const hostedHome = await home();
+  const hosted = await run(
+    ["init", "--name", "Acme Support", "--json"],
+    fixture({ audience: "https://api.mydaykeeper.com/v1/machine-enrollments" }),
+    { DAYKEEPER_HOME: hostedHome },
+  );
+  const hostedData = JSON.parse(hosted.output).data;
+  assert.equal(hostedData.consoleUrl, "https://app.mydaykeeper.com");
+  assert.deepEqual(hostedData.nextSteps, [
+    {
+      action: "claim_workspace",
+      description:
+        "Give a person owner access to this workspace. The command prints a link to send them.",
+      command: "npx @skyporch/daykeeper-cli claim --email you@company.com",
+    },
+    {
+      action: "open_console",
+      description:
+        "Sign in to the console to see the inbox and add website or email channels.",
+      url: "https://app.mydaykeeper.com",
+    },
+    {
+      action: "run_commands",
+      description:
+        "Other commands use the stored credential, so nothing needs exporting.",
+      command: "npx @skyporch/daykeeper-cli tenants list",
+    },
+  ]);
+});
+
+test("init prints readable text for a person at a terminal, never the credential", async () => {
+  const directory = await home();
+  const server = fixture();
+  const text = await run(
+    ["init", "--name", "Acme Support", "--origin", ORIGIN, "--home", directory],
+    server,
+    {},
+    { interactive: true },
+  );
+  assert.equal(text.exitCode, 0, text.output);
+  assert.match(text.output, /^Your Daykeeper inbox is ready\.\n/);
+  assert(text.output.includes(ORGANIZATION));
+  assert(text.output.includes(TENANT));
+  assert(text.output.includes("claim --email you@company.com"));
+  assert(!text.output.includes(server.tokens[0]!));
+  assert.throws(() => JSON.parse(text.output));
+
+  // --json keeps the envelope even at a terminal.
+  const json = await run(
+    [
+      "init",
+      "--name",
+      "Acme Support",
+      "--origin",
+      ORIGIN,
+      "--home",
+      directory,
+      "--json",
+    ],
+    fixture({ trafficEnabled: [true] }),
+    {},
+    { interactive: true },
+  );
+  assert.equal(JSON.parse(json.output).ok, true);
+
+  // A failure at a terminal is text too, and still says how to resume.
+  const failed = await run(
+    ["init", "--name", "Acme Support", "--plan", "pro", "--home", directory],
+    server,
+    {},
+    { interactive: true },
+  );
+  assert.equal(failed.exitCode, 1);
+  assert.match(failed.output, /^Daykeeper init stopped: /);
+  assert.match(failed.output, /Code: INVALID_ARGUMENT/);
+});
+
+test("after init, other commands use the stored credential with nothing exported", async () => {
+  const directory = await home();
+  const server = fixture();
+  const created = await init({ home: directory, fixture: server });
+  assert.equal(created.exitCode, 0, created.output);
+  const token = server.tokens[0]!;
+
+  const listed = await run(["tenants", "list", "--home", directory], server, {
+    DAYKEEPER_ORIGIN: ORIGIN,
+  });
+  assert.equal(listed.exitCode, 0, listed.output);
+  assert(!listed.output.includes(token));
+  const request = server.requests.at(-1)!;
+  assert.equal(request.path, "/v1/tenants");
+  assert.equal(request.headers.get("authorization"), `Bearer ${token}`);
+
+  // DAYKEEPER_HOME finds the same state file as --home.
+  const viaEnvironment = await run(["tenants", "list"], server, {
+    DAYKEEPER_ORIGIN: ORIGIN,
+    DAYKEEPER_HOME: directory,
+  });
+  assert.equal(viaEnvironment.exitCode, 0, viaEnvironment.output);
+});
+
+test("the stored credential is only ever sent to the origin that issued it", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const before = server.requests.length;
+
+  // No origin configured resolves the hosted API, which did not issue it.
+  const hosted = await run(["tenants", "list", "--home", directory], server);
+  assert.equal(JSON.parse(hosted.output).error.code, "STATE_ORIGIN_MISMATCH");
+
+  const elsewhere = await run(
+    [
+      "tenants",
+      "list",
+      "--home",
+      directory,
+      "--base-url",
+      "https://elsewhere.example.test",
+    ],
+    server,
+    { DAYKEEPER_ORIGIN: ORIGIN },
+  );
+  const envelope = JSON.parse(elsewhere.output);
+  assert.equal(envelope.error.code, "STATE_ORIGIN_MISMATCH");
+  assert.deepEqual(envelope.error.fields, ["base-url"]);
+  assert.equal(server.requests.length, before, "No request may be sent");
+});
+
+test("the hosted origin needs no origin configuration after init", async () => {
+  const directory = await home();
+  const server = fixture({
+    audience: "https://api.mydaykeeper.com/v1/machine-enrollments",
+  });
+  await run(["init", "--name", "Acme Support", "--home", directory], server);
+  const listed = await run(["tenants", "list", "--home", directory], server);
+  assert.equal(listed.exitCode, 0, listed.output);
+  assert.equal(server.requests.at(-1)!.path, "/v1/tenants");
+  assert.equal(
+    server.requests.at(-1)!.headers.get("authorization"),
+    `Bearer ${server.tokens[0]}`,
+  );
+});
+
+test("a supplied DAYKEEPER_API_KEY overrides the stored credential", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const supplied = "daykeeper_supplied_access_token_1234";
+  const result = await run(["tenants", "list", "--home", directory], server, {
+    DAYKEEPER_API_KEY: supplied,
+    DAYKEEPER_API_URL: ORIGIN,
+  });
+  assert.equal(result.exitCode, 0, result.output);
+  assert.equal(
+    server.requests.at(-1)!.headers.get("authorization"),
+    `Bearer ${supplied}`,
+  );
+  assert(!result.output.includes(supplied));
+});
+
+test("a command rotates a stored credential inside its last day before using it", async () => {
+  const directory = await home();
+  const signer = await DaykeeperMachineSigner.generate();
+  await seedState(directory, {
+    owner: { privateJwk: await signer.exportPrivateKey() },
+    workspace: {
+      ownerId: OWNER,
+      organizationId: ORGANIZATION,
+      organizationSlug: "acme-support-machine",
+    },
+    credential: {
+      id: CREDENTIAL,
+      expiresAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+      token: machineToken(CREDENTIAL),
+      rotationIntentId: null,
+    },
+  });
+  const server = fixture({ ownerKey: signer.publicKey });
+  const result = await run(["tenants", "list", "--home", directory], server, {
+    DAYKEEPER_ORIGIN: ORIGIN,
+  });
+  assert.equal(result.exitCode, 0, result.output);
+  const rotated = server.tokens[0]!;
+  assert.equal(
+    server.sent("GET", "/v1/tenants")[0]!.headers.get("authorization"),
+    `Bearer ${rotated}`,
+  );
+  assert.equal((await readStateFile(directory)).credential.token, rotated);
+  assert(!result.output.includes(rotated));
+});
+
+test("a missing or unenrolled state file asks for init and sends nothing", async () => {
+  const directory = await home();
+  const server = fixture();
+  const missing = await run(["capabilities", "--home", directory], server);
+  const envelope = JSON.parse(missing.output);
+  assert.equal(envelope.error.code, "AUTH_REQUIRED");
+  assert.deepEqual(envelope.error.nextActions, ["run_init"]);
+
+  await seedState(directory, {});
+  const unenrolled = await run(["capabilities", "--home", directory], server, {
+    DAYKEEPER_ORIGIN: ORIGIN,
+  });
+  assert.equal(JSON.parse(unenrolled.output).error.code, "INIT_REQUIRED");
+  assert.equal(server.requests.length, 0);
+});
+
+test("init accepts an exported DAYKEEPER_API_KEY only when it is the stored credential", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const stored = (await readStateFile(directory)).credential.token as string;
+  const rerun = await init({
+    home: directory,
+    fixture: fixture({ trafficEnabled: [true] }),
+    env: { DAYKEEPER_API_KEY: stored },
+  });
+  assert.equal(rerun.exitCode, 0, rerun.output);
+  assert(!rerun.output.includes(stored));
+
+  const other = await init({
+    home: directory,
+    fixture: server,
+    env: { DAYKEEPER_API_KEY: "daykeeper_supplied_access_token_1234" },
+  });
+  assert.equal(other.envelope.error.code, "INVALID_ARGUMENT");
+  assert.deepEqual(other.envelope.error.fields, ["DAYKEEPER_API_KEY"]);
+});
+
+test("an exported stored key with no URL goes to the origin that issued it, never hosted", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const stored = (await readStateFile(directory)).credential.token as string;
+  const hosts: string[] = [];
+  const recording: Fixture = {
+    ...server,
+    fetch: (input, init) => {
+      hosts.push(new URL(String(input)).origin);
+      return server.fetch(input, init);
+    },
+  };
+
+  const exported = await run(
+    ["tenants", "list", "--home", directory],
+    recording,
+    { DAYKEEPER_API_KEY: stored },
+  );
+  assert.equal(exported.exitCode, 0, exported.output);
+  assert.deepEqual(hosts, [ORIGIN]);
+
+  // The same key piped on stdin is routed the same way.
+  const lines: string[] = [];
+  const piped = await runCli(
+    ["tenants", "list", "--home", directory, "--token-stdin"],
+    {
+      env: {},
+      stdin: Readable.from([stored]),
+      write: (line) => lines.push(line),
+      fetch: recording.fetch,
+      clock: fakeClock().clock,
+    },
+  );
+  assert.equal(piped, 0, lines[0]);
+  assert.deepEqual(hosts, [ORIGIN, ORIGIN]);
+  assert(!lines[0]!.includes(stored));
+});
+
+test("the stored key with an explicit URL for another origin is refused", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const stored = (await readStateFile(directory)).credential.token as string;
+  const before = server.requests.length;
+
+  for (const env of [
+    {
+      DAYKEEPER_API_KEY: stored,
+      DAYKEEPER_API_URL: "https://api.mydaykeeper.com",
+    },
+    { DAYKEEPER_API_KEY: stored },
+  ]) {
+    const args = ["tenants", "list", "--home", directory];
+    if (!("DAYKEEPER_API_URL" in env))
+      args.push("--base-url", "https://elsewhere.example.test");
+    const result = await run(args, server, env);
+    const envelope = JSON.parse(result.output);
+    assert.equal(envelope.error.code, "STATE_ORIGIN_MISMATCH");
+    assert(!result.output.includes(stored));
+  }
+  assert.equal(server.requests.length, before, "No request may be sent");
+
+  // An explicit URL on the issuing origin is fine.
+  const same = await run(["tenants", "list", "--home", directory], server, {
+    DAYKEEPER_API_KEY: stored,
+    DAYKEEPER_API_URL: ORIGIN,
+  });
+  assert.equal(same.exitCode, 0, same.output);
+});
+
+test("another key with no URL needs one when the stored state is for a different origin", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const before = server.requests.length;
+  const other = "daykeeper_supplied_access_token_1234";
+
+  const refused = await run(["tenants", "list", "--home", directory], server, {
+    DAYKEEPER_API_KEY: other,
+  });
+  const envelope = JSON.parse(refused.output);
+  assert.equal(envelope.error.code, "CONFIGURATION_REQUIRED");
+  assert.deepEqual(envelope.error.fields, ["base-url"]);
+  assert.equal(server.requests.length, before, "No request may be sent");
+  assert(!refused.output.includes(other));
+
+  // An unreadable state file cannot vouch for the hosted default either.
+  const broken = await home();
+  await mkdir(broken, { recursive: true, mode: 0o700 });
+  await writeFile(join(broken, "credentials.json"), "{broken", { mode: 0o600 });
+  const unreadable = await run(["tenants", "list", "--home", broken], server, {
+    DAYKEEPER_API_KEY: other,
+  });
+  assert.equal(
+    JSON.parse(unreadable.output).error.code,
+    "CONFIGURATION_REQUIRED",
+  );
+  assert.equal(server.requests.length, before);
+});
+
+test("another key with no URL uses the hosted API when the stored state is hosted", async () => {
+  const directory = await home();
+  const server = fixture({
+    audience: "https://api.mydaykeeper.com/v1/machine-enrollments",
+  });
+  await run(["init", "--name", "Acme Support", "--home", directory], server);
+  const other = "daykeeper_supplied_access_token_1234";
+  const hosts: string[] = [];
+  const result = await run(
+    ["tenants", "list", "--home", directory],
+    {
+      ...server,
+      fetch: (input, init) => {
+        hosts.push(new URL(String(input)).origin);
+        return server.fetch(input, init);
+      },
+    },
+    { DAYKEEPER_API_KEY: other },
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  assert.deepEqual(hosts, ["https://api.mydaykeeper.com"]);
+  const request = server.requests.at(-1)!;
+  assert.equal(request.path, "/v1/tenants");
+  assert.equal(request.headers.get("authorization"), `Bearer ${other}`);
+});

@@ -1,28 +1,10 @@
-import { join } from "node:path";
-import {
-  DaykeeperClient,
-  DaykeeperMachineSigner,
-  DaykeeperOnboardingClient,
-  generateIdempotencyKey,
-} from "@skyporch/daykeeper";
-import {
-  needsRotation,
-  retries,
-  rotateCredential,
-  type Clock,
-} from "./credential.ts";
+import { DaykeeperClient, generateIdempotencyKey } from "@skyporch/daykeeper";
+import type { Clock, Retries } from "./credential.ts";
 import { CliError } from "./errors.ts";
-import { assertPinnedOrigin, resolveOrigins, type Origins } from "./origins.ts";
+import { resolveOrigins, type Origins } from "./origins.ts";
 import { emailAddress } from "./schemas.ts";
-import {
-  STATE_FILE,
-  STATE_VERSION,
-  readState,
-  resolveHome,
-  writeState,
-  type ClaimState,
-  type InitState,
-} from "./state.ts";
+import { resolveHome, type ClaimState, type InitState } from "./state.ts";
+import { initRequired, openStoredCredential } from "./stored.ts";
 
 /**
  * `claim` polls nothing, so its whole wait budget is the rate-limit sleeps a
@@ -58,49 +40,19 @@ export async function runClaim(
   subcommand: "create" | "status",
 ): Promise<Record<string, unknown>> {
   const args = parseClaimArguments(context.options, context.env, subcommand);
-  const statePath = join(args.home, STATE_FILE);
-  const stored = await readState(statePath);
-  if (!stored) {
-    throw initRequired(
-      "No Daykeeper state file was found. Run init first, then claim the workspace it creates.",
-    );
-  }
   // A stored credential belongs to the origin that issued it, exactly as in
   // `init`: the pin is checked before a client exists, so the token is never
   // offered to a different host.
-  assertPinnedOrigin(stored, args);
-  if (!stored.owner?.privateJwk || !stored.workspace) {
-    throw initRequired(
-      "The Daykeeper state file has no enrolled workspace. Run init again before claiming it.",
-    );
-  }
-
-  const state: InitState = { ...stored, version: STATE_VERSION };
-  const workspace = state.workspace!;
-  const save = async () => {
-    state.updatedAt = new Date(context.clock.now()).toISOString();
-    await writeState(args.home, statePath, state);
-  };
-
-  let signer: DaykeeperMachineSigner;
-  try {
-    signer = await DaykeeperMachineSigner.fromPrivateKey(
-      state.owner!.privateJwk,
-    );
-  } catch {
-    throw new CliError(
-      "STATE_UNREADABLE",
-      "The stored machine owner key is not a usable P-256 private key.",
-      ["home"],
-    );
-  }
-  const privateScalar = state.owner!.privateJwk.d;
-  if (typeof privateScalar === "string") context.addSecret(privateScalar);
-
-  const attempts = retries({
-    clock: context.clock,
-    signal: context.signal,
-    budget: context.clock.now() + CLAIM_WAIT_MS,
+  const {
+    state,
+    save,
+    retries: attempts,
+    token,
+    rotated,
+  } = await openStoredCredential(context, {
+    home: args.home,
+    origins: () => args,
+    waitMs: CLAIM_WAIT_MS,
     rateLimited: () =>
       new CliError(
         "RATE_LIMITED",
@@ -109,38 +61,13 @@ export async function runClaim(
         true,
         ["run_claim_again"],
       ),
+    missing: () =>
+      initRequired(
+        "No Daykeeper state file was found. Run init first, then claim the workspace it creates.",
+      ),
+    unenrolled:
+      "The Daykeeper state file has no enrolled workspace. Run init again before claiming it.",
   });
-
-  // A credential inside its last day is replaced before it is used, through
-  // the same rotation path `init` uses.
-  let rotated = false;
-  if (needsRotation(state.credential, context.clock.now())) {
-    await rotateCredential({
-      state,
-      ownerId: workspace.ownerId,
-      signer,
-      onboarding: new DaykeeperOnboardingClient({
-        baseUrl: args.onboardingUrl,
-        fetch: context.fetch,
-        timeoutMs: context.timeoutMs,
-      }),
-      rotationAudience: `${args.onboardingUrl}/v1/machine-credential-rotations`,
-      save,
-      retries: attempts,
-      addSecret: context.addSecret,
-    });
-    rotated = true;
-  }
-
-  const token = state.credential?.token;
-  if (!token || !state.credential?.id) {
-    throw new CliError(
-      "CREDENTIAL_UNRECOVERABLE",
-      "No usable machine credential could be recovered for this owner key.",
-      ["credential"],
-    );
-  }
-  context.addSecret(token);
   const client = new DaykeeperClient({
     baseUrl: args.apiUrl,
     apiKey: token,
@@ -157,7 +84,7 @@ async function create(
   client: DaykeeperClient,
   state: InitState,
   save: () => Promise<void>,
-  attempts: ReturnType<typeof retries>,
+  attempts: Retries,
   args: ClaimArguments,
   rotated: boolean,
 ): Promise<Record<string, unknown>> {
@@ -223,7 +150,7 @@ async function status(
   client: DaykeeperClient,
   state: InitState,
   save: () => Promise<void>,
-  attempts: ReturnType<typeof retries>,
+  attempts: Retries,
   rotated: boolean,
 ): Promise<Record<string, unknown>> {
   const { items } = await attempts.request(() => client.workspaceClaims.list());
@@ -260,10 +187,6 @@ async function status(
     reconciled: { updated, forgotten },
     credentialRotated: rotated,
   };
-}
-
-function initRequired(message: string): CliError {
-  return new CliError("INIT_REQUIRED", message, ["home"], false, ["run_init"]);
 }
 
 function parseClaimArguments(

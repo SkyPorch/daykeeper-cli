@@ -1,4 +1,4 @@
-export const CLI_VERSION = "0.2.0";
+export const CLI_VERSION = "0.3.0";
 export const SDK_VERSION = "0.3.0";
 export const ENVELOPE_VERSION = "daykeeper.cli.v1";
 export const MAX_INPUT_BYTES = 512 * 1024;
@@ -12,6 +12,10 @@ export const MAX_TOKEN_BYTES = 16 * 1024;
  */
 export const HOSTED_ORIGIN = "https://api.mydaykeeper.com";
 export const HOSTED_GATEWAY_URL = "https://gateway.mydaykeeper.com";
+/** The hosted console, where a person signs in and accepts a workspace claim. */
+export const HOSTED_CONSOLE_URL = "https://app.mydaykeeper.com";
+/** How a caller runs the CLI without installing it first. */
+export const CLI_INVOCATION = "npx @skyporch/daykeeper-cli";
 
 export const SDK_PACKAGE = "@skyporch/daykeeper";
 export const MCP_PACKAGE = "@skyporch/daykeeper-mcp@0.2.0";

@@ -716,3 +716,27 @@ test("claim's help contract lists every option it accepts", async () => {
   for (const flag of ["reissue", "home", "json", "origin", "base-url"])
     assert(entry.optional.includes(flag), flag);
 });
+
+test("claim runs with the DAYKEEPER_API_KEY init printed exported, and refuses any other", async () => {
+  const directory = await home();
+  const signer = await seedState(directory);
+  const stored = (await readStateFile(directory)).credential.token as string;
+  const server = fixture({ ownerKey: signer.publicKey });
+  const exported = await claim({
+    home: directory,
+    fixture: server,
+    env: { DAYKEEPER_API_KEY: stored },
+  });
+  assert.equal(exported.exitCode, 0, exported.output);
+  assert(!exported.output.includes(stored));
+
+  const before = server.requests.length;
+  const other = await claim({
+    home: directory,
+    fixture: server,
+    env: { DAYKEEPER_API_KEY: "daykeeper_supplied_access_token_1234" },
+  });
+  assert.equal(other.envelope.error.code, "INVALID_ARGUMENT");
+  assert.deepEqual(other.envelope.error.fields, ["DAYKEEPER_API_KEY"]);
+  assert.equal(server.requests.length, before);
+});
