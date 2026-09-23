@@ -61,8 +61,13 @@ of these that is present:
    `AUTH_SOURCE_CONFLICT`, as does either one together with `--token-stdin`.
 3. The credential `init` stored in `<home>/credentials.json`.
 
-A supplied credential goes to `--base-url`, then `DAYKEEPER_API_URL`, then the
-hosted `https://api.mydaykeeper.com`. The stored credential is pinned exactly as
+A supplied credential goes to `--base-url`, then `DAYKEEPER_API_URL`. Without
+either, the stored credential goes to the origin that issued it, and any other
+key goes to the hosted `https://api.mydaykeeper.com` only when there is no state
+file or the state is for the hosted origin; otherwise the command fails with
+`CONFIGURATION_REQUIRED` rather than send a key to a guessed origin. The stored
+credential with an explicit URL on another origin fails with
+`STATE_ORIGIN_MISMATCH`. The stored credential is pinned exactly as
 it is for `init` and `claim`: the origins resolve the same way (flags, then their
 environment variables, then `DAYKEEPER_ORIGIN`, then the hosted origins), and a
 run that resolves a different one fails with `STATE_ORIGIN_MISMATCH` before any

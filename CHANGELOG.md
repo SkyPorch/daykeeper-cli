@@ -21,9 +21,12 @@ Not published yet.
   entry to the envelope's new `warnings` array. The two set to different values
   fail with `AUTH_SOURCE_CONFLICT`. A supplied key or `--token-stdin` overrides
   the stored credential.
-- The management API defaults to `https://api.mydaykeeper.com`.
-  `--base-url` and `DAYKEEPER_API_URL` still override it, so
-  `CONFIGURATION_REQUIRED` is no longer returned for a missing API URL. A
+- A supplied credential with no `--base-url` or `DAYKEEPER_API_URL` is routed
+  by the state file: the stored credential goes to the origin that issued it;
+  any other key goes to `https://api.mydaykeeper.com` when there is no state
+  file or the state is for the hosted origin, and otherwise fails with
+  `CONFIGURATION_REQUIRED` instead of guessing. The stored credential sent with
+  an explicit URL on a different origin fails with `STATE_ORIGIN_MISMATCH`. A
   missing credential now returns `AUTH_REQUIRED` with
   `nextActions: ["run_init"]`.
 - `--home` is a global option, so every command can find a state file `init`

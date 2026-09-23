@@ -20,7 +20,7 @@ import { CliError, errorEnvelope, reportedOutcomeUnknown } from "./errors.ts";
 import { InitStepError, realClock, runInit, type InitClock } from "./init.ts";
 import { renderInitText } from "./human.ts";
 import { resolveOrigins } from "./origins.ts";
-import { STATE_FILE, readState, resolveHome } from "./state.ts";
+import { STATE_FILE, readState, resolveHome, type InitState } from "./state.ts";
 import { openStoredCredential } from "./stored.ts";
 
 /** Server admission codes that only the Daykeeper operator can lift. */
@@ -212,10 +212,11 @@ export async function runCli(
           `Use either ${supplied.variable} or --token-stdin, not both.`,
         );
       // With no supplied credential, the one init stored is used against the
-      // origins it was issued for; otherwise the hosted API is the default.
-      const suppliedBaseUrl =
+      // origins it was issued for. A supplied one is routed by
+      // `suppliedCredentialUrl` once it has been read.
+      const explicitBaseUrl =
         textOption(parsed.options["base-url"]) ??
-        (context.env.DAYKEEPER_API_URL || HOSTED_ORIGIN);
+        (context.env.DAYKEEPER_API_URL || undefined);
 
       controller = new AbortController();
       const active = controller;
@@ -250,7 +251,7 @@ export async function runCli(
       const command = parsed;
       const transport = context.fetch ?? globalThis.fetch;
       const task = async () => {
-        let baseUrl = suppliedBaseUrl;
+        let baseUrl = explicitBaseUrl ?? HOSTED_ORIGIN;
         const token = command.options["token-stdin"]
           ? (
               await readBounded(
@@ -324,6 +325,13 @@ export async function runCli(
           );
         }
         secrets.push(token);
+        if (command.options["token-stdin"] || supplied)
+          baseUrl = await suppliedCredentialUrl(
+            token,
+            explicitBaseUrl,
+            command.options,
+            context.env,
+          );
         const input = command.command?.input
           ? validateInput(
               command.command.input,
@@ -492,6 +500,57 @@ export async function runCli(
 
 function textOption(value: string | boolean | undefined): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+/**
+ * Where a supplied credential may be sent. An explicit URL wins, except that
+ * the stored credential itself is never sent anywhere but the origin that
+ * issued it. Without an explicit URL, the stored credential goes to its own
+ * origin, and any other key goes to the hosted API only when no state file
+ * pins this machine to a different origin; otherwise an explicit URL is
+ * required rather than guessing.
+ */
+async function suppliedCredentialUrl(
+  token: string,
+  explicit: string | undefined,
+  options: Readonly<Record<string, string | boolean | undefined>>,
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<string> {
+  let state: InitState | undefined;
+  let unreadable = false;
+  try {
+    state = await readState(
+      join(resolveHome(textOption(options.home), env), STATE_FILE),
+    );
+  } catch {
+    unreadable = true;
+  }
+  const isStored = state?.credential?.token === token;
+  if (explicit !== undefined) {
+    if (isStored && urlOrigin(explicit) !== state!.apiUrl)
+      throw new CliError(
+        "STATE_ORIGIN_MISMATCH",
+        "The supplied key is the stored Daykeeper credential, which was issued for a different origin. No request was sent.",
+        ["base-url"],
+      );
+    return explicit;
+  }
+  if (isStored) return state!.apiUrl;
+  if (!unreadable && (!state || state.apiUrl === HOSTED_ORIGIN))
+    return HOSTED_ORIGIN;
+  throw new CliError(
+    "CONFIGURATION_REQUIRED",
+    "This machine's stored Daykeeper state points at a different origin, so a supplied key is not sent to the hosted API by default. Set DAYKEEPER_API_URL or --base-url.",
+    ["base-url"],
+  );
+}
+
+function urlOrigin(value: string): string | undefined {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The token `init` stored, or undefined when there is none or it is unreadable. */

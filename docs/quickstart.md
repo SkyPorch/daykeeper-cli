@@ -44,7 +44,7 @@ Successful output is a single envelope:
 | Variable               | Purpose                                                                                           |
 | ---------------------- | ------------------------------------------------------------------------------------------------- |
 | `DAYKEEPER_API_KEY`    | Scoped credential. Overrides the stored one. `DAYKEEPER_ACCESS_TOKEN` is a deprecated alias.      |
-| `DAYKEEPER_API_URL`    | Management API for a supplied credential. Default `https://api.mydaykeeper.com`.                  |
+| `DAYKEEPER_API_URL`    | Management API for a supplied credential. Default: the stored origin or hosted.                   |
 | `DAYKEEPER_HOME`       | Where `init` stored its state. Default `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`.  |
 | `DAYKEEPER_ORIGIN`     | The origin `init` used, when it was not the hosted one. The stored credential is only sent there. |
 | `DAYKEEPER_TIMEOUT_MS` | Optional. Combined input and request deadline, 1000–60000 ms. Defaults to 30000.                  |

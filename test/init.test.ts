@@ -1646,3 +1646,130 @@ test("init accepts an exported DAYKEEPER_API_KEY only when it is the stored cred
   assert.equal(other.envelope.error.code, "INVALID_ARGUMENT");
   assert.deepEqual(other.envelope.error.fields, ["DAYKEEPER_API_KEY"]);
 });
+
+test("an exported stored key with no URL goes to the origin that issued it, never hosted", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const stored = (await readStateFile(directory)).credential.token as string;
+  const hosts: string[] = [];
+  const recording: Fixture = {
+    ...server,
+    fetch: (input, init) => {
+      hosts.push(new URL(String(input)).origin);
+      return server.fetch(input, init);
+    },
+  };
+
+  const exported = await run(
+    ["tenants", "list", "--home", directory],
+    recording,
+    { DAYKEEPER_API_KEY: stored },
+  );
+  assert.equal(exported.exitCode, 0, exported.output);
+  assert.deepEqual(hosts, [ORIGIN]);
+
+  // The same key piped on stdin is routed the same way.
+  const lines: string[] = [];
+  const piped = await runCli(
+    ["tenants", "list", "--home", directory, "--token-stdin"],
+    {
+      env: {},
+      stdin: Readable.from([stored]),
+      write: (line) => lines.push(line),
+      fetch: recording.fetch,
+      clock: fakeClock().clock,
+    },
+  );
+  assert.equal(piped, 0, lines[0]);
+  assert.deepEqual(hosts, [ORIGIN, ORIGIN]);
+  assert(!lines[0]!.includes(stored));
+});
+
+test("the stored key with an explicit URL for another origin is refused", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const stored = (await readStateFile(directory)).credential.token as string;
+  const before = server.requests.length;
+
+  for (const env of [
+    {
+      DAYKEEPER_API_KEY: stored,
+      DAYKEEPER_API_URL: "https://api.mydaykeeper.com",
+    },
+    { DAYKEEPER_API_KEY: stored },
+  ]) {
+    const args = ["tenants", "list", "--home", directory];
+    if (!("DAYKEEPER_API_URL" in env))
+      args.push("--base-url", "https://elsewhere.example.test");
+    const result = await run(args, server, env);
+    const envelope = JSON.parse(result.output);
+    assert.equal(envelope.error.code, "STATE_ORIGIN_MISMATCH");
+    assert(!result.output.includes(stored));
+  }
+  assert.equal(server.requests.length, before, "No request may be sent");
+
+  // An explicit URL on the issuing origin is fine.
+  const same = await run(["tenants", "list", "--home", directory], server, {
+    DAYKEEPER_API_KEY: stored,
+    DAYKEEPER_API_URL: ORIGIN,
+  });
+  assert.equal(same.exitCode, 0, same.output);
+});
+
+test("another key with no URL needs one when the stored state is for a different origin", async () => {
+  const directory = await home();
+  const server = fixture();
+  await init({ home: directory, fixture: server });
+  const before = server.requests.length;
+  const other = "daykeeper_supplied_access_token_1234";
+
+  const refused = await run(["tenants", "list", "--home", directory], server, {
+    DAYKEEPER_API_KEY: other,
+  });
+  const envelope = JSON.parse(refused.output);
+  assert.equal(envelope.error.code, "CONFIGURATION_REQUIRED");
+  assert.deepEqual(envelope.error.fields, ["base-url"]);
+  assert.equal(server.requests.length, before, "No request may be sent");
+  assert(!refused.output.includes(other));
+
+  // An unreadable state file cannot vouch for the hosted default either.
+  const broken = await home();
+  await mkdir(broken, { recursive: true, mode: 0o700 });
+  await writeFile(join(broken, "credentials.json"), "{broken", { mode: 0o600 });
+  const unreadable = await run(["tenants", "list", "--home", broken], server, {
+    DAYKEEPER_API_KEY: other,
+  });
+  assert.equal(
+    JSON.parse(unreadable.output).error.code,
+    "CONFIGURATION_REQUIRED",
+  );
+  assert.equal(server.requests.length, before);
+});
+
+test("another key with no URL uses the hosted API when the stored state is hosted", async () => {
+  const directory = await home();
+  const server = fixture({
+    audience: "https://api.mydaykeeper.com/v1/machine-enrollments",
+  });
+  await run(["init", "--name", "Acme Support", "--home", directory], server);
+  const other = "daykeeper_supplied_access_token_1234";
+  const hosts: string[] = [];
+  const result = await run(
+    ["tenants", "list", "--home", directory],
+    {
+      ...server,
+      fetch: (input, init) => {
+        hosts.push(new URL(String(input)).origin);
+        return server.fetch(input, init);
+      },
+    },
+    { DAYKEEPER_API_KEY: other },
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  assert.deepEqual(hosts, ["https://api.mydaykeeper.com"]);
+  const request = server.requests.at(-1)!;
+  assert.equal(request.path, "/v1/tenants");
+  assert.equal(request.headers.get("authorization"), `Bearer ${other}`);
+});

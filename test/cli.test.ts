@@ -604,8 +604,9 @@ test("TTY stdin never prompts for JSON or credentials", async () => {
 });
 
 test("the API origin defaults to the hosted API and unsafe URL components never reach transport", async () => {
+  // With no state file at all, a supplied key may default to the hosted API.
   const absent = await invoke(["capabilities"], {
-    env: { DAYKEEPER_API_KEY: TOKEN },
+    env: { DAYKEEPER_API_KEY: TOKEN, DAYKEEPER_HOME: await emptyHome() },
   });
   assert.equal(absent.exitCode, 0, absent.output);
   assert.equal(

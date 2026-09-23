@@ -63,7 +63,10 @@ Each command uses the first credential it finds:
 3. The credential `init` stored in `<home>/credentials.json`.
 
 Set at most one of the first two. A supplied credential goes to `--base-url`,
-then `DAYKEEPER_API_URL`, then `https://api.mydaykeeper.com`. Include any
+then `DAYKEEPER_API_URL`. Without either, the key `init` stored goes to the
+origin that issued it; any other key goes to `https://api.mydaykeeper.com`
+unless this machine's state is for a different origin, in which case set the URL
+explicitly. Include any
 reverse-proxy prefix in the URL. Remote origins must use HTTPS;
 `http://127.0.0.1` and `http://localhost` are supported for local development.
 URLs with credentials, query strings, or fragments are rejected, and requests
