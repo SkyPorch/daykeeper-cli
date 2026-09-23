@@ -12,11 +12,11 @@ importers:
   .:
     dependencies:
       '@skyporch/daykeeper':
-        specifier: 0.3.0
-        version: 0.3.0
+        specifier: 0.4.0
+        version: 0.4.0
       zod:
-        specifier: 4.4.3
-        version: 4.4.3
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@types/node':
         specifier: 22.20.1
@@ -336,8 +336,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@skyporch/daykeeper@0.3.0':
-    resolution: {integrity: sha512-uAwPa145EbSIvdNkLPrSb4bBxd6ev3Fs5hDVFMJUuSx6VU8bnukSv2QkXqUFPFeQEch5aUyvhd1nyyPNuqZ7Qg==}
+  '@skyporch/daykeeper@0.4.0':
+    resolution: {integrity: sha512-aMVGNng3yBjqFzhYt9X5by19f/P0xovCpVCkCGnWvVTD9PUF4+9Q8VReADpx87H/CoUmvxwlHgLQRg6ywPuETg==}
     engines: {node: '>=20'}
 
   '@types/estree@1.0.9':
@@ -559,8 +559,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
 
@@ -734,7 +734,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.63.1':
     optional: true
 
-  '@skyporch/daykeeper@0.3.0': {}
+  '@skyporch/daykeeper@0.4.0': {}
 
   '@types/estree@1.0.9': {}
 
@@ -966,4 +966,4 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  zod@4.4.3: {}
+  zod@4.6.5: {}
