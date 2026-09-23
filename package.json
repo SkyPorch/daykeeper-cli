@@ -61,9 +61,9 @@
   },
   "devDependencies": {
     "@types/node": "22.20.1",
-    "prettier": "3.9.6",
+    "prettier": "3.9.8",
     "tsup": "8.5.1",
-    "tsx": "4.23.12",
+    "tsx": "4.23.13",
     "typescript": "5.9.3"
   },
   "pnpm": {
