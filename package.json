@@ -54,7 +54,7 @@
   "bugs": {
     "url": "https://github.com/SkyPorch/daykeeper-cli/issues"
   },
-  "homepage": "https://github.com/SkyPorch/daykeeper-cli#readme",
+  "homepage": "https://www.mydaykeeper.com",
   "dependencies": {
     "@skyporch/daykeeper": "0.3.0",
     "zod": "4.4.3"
