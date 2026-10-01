@@ -1,14 +1,16 @@
 # Releasing the Daykeeper CLI
 
-Version `0.1.0` is the first release candidate. `private` is `false` so the
-approved bootstrap publish can proceed; until an npm owner publishes it, no
-CLI package exists on npm. Apache-2.0
-is the approved license for this original code. This is not a license gate.
+`private` is `false` and Apache-2.0 is the approved license for this original
+code. This is not a license gate.
 
 ## Provenance status
 
-Nothing has been published for `@skyporch/daykeeper-cli`, so it has no
-provenance attestation and no missing one either.
+`@skyporch/daykeeper-cli` `0.1.0` and `0.2.0` were published by hand and carry
+**no provenance attestation**. `0.3.0` is the first release meant to go through
+`release.yml`. Its first run needs the npm trusted publisher and the
+`DAYKEEPER_RELEASE_APPROVED` variable from the bootstrap steps below. A 401
+from `npm stage publish` on that run usually means the trusted publisher is
+missing or does not match the repository, workflow and environment.
 
 Two sibling packages were published by hand and are affected:
 `@skyporch/daykeeper@0.1.0` and `@skyporch/daykeeper-react-native@0.1.0` were
@@ -19,12 +21,14 @@ one. Those two `0.1.0` versions **cannot be fixed retroactively** — npm versio
 are immutable, and an attestation cannot be attached after the fact. The fix is
 forward-only: the first workflow-driven release of each package, publishing with
 `--provenance` through trusted publishing, is what produces a real attestation.
-No GitHub release exists in any Daykeeper repository, and no `release.yml` has
-ever run.
+`@skyporch/daykeeper` has released through its `release.yml` with provenance
+since 0.2.0; this repository's `release.yml` has not run yet.
 
 ## Bootstrap approval
 
-Before the first release, a maintainer must:
+Before the first workflow release, a maintainer must complete these steps.
+Steps 1 to 4 were done for the hand-published 0.1.0 and 0.2.0; 0.3.0 still
+needs steps 5 and 6. Do not hand-publish 0.3.0 to skip them.
 
 1. Review and merge the implementation and its complete test evidence.
 2. Audit the repository history and package contents for credentials, customer
