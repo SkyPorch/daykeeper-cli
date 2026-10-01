@@ -2,10 +2,9 @@
 
 ## Unreleased
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-01)
 
 Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.
-Not published yet.
 
 ### Changed
 
