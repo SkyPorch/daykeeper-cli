@@ -1,5 +1,7 @@
 # Daykeeper CLI
 
+For more about Daykeeper, visit [mydaykeeper.com](https://www.mydaykeeper.com).
+
 A command line for people, agents, and CI jobs managing Daykeeper. It calls the
 `@skyporch/daykeeper@0.3.0` SDK and returns one versioned JSON envelope
 per invocation. The code is Apache-2.0; see [LICENSE](LICENSE) and
