@@ -28,6 +28,10 @@ Notes:
 - `@skyporch/daykeeper` 0.3.0 adds the `workspaceClaims` namespace (`create`,
   `list`, `revoke`) that `claim` consumes. The contract bump is `v1.3.0`,
   additive and minor: no existing route or type changes.
+- CLI 0.3.0 uses the same SDK and contract as 0.2.0. Its changes are CLI
+  behavior: the stored credential is used by default, `DAYKEEPER_API_KEY` is
+  canonical, and `DAYKEEPER_ACCESS_TOKEN` is a deprecated alias that fails with
+  `AUTH_SOURCE_CONFLICT` when set to a different value. See `CHANGELOG.md`.
 - The tag/commit cell must be filled with a real `vMAJOR.MINOR.PATCH` tag and
   its commit SHA before any CLI release is cut. Releasing against an untagged
   contract is not permitted.
