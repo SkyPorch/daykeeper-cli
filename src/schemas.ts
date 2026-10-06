@@ -130,13 +130,16 @@ export function validateInput<Kind extends InputKind>(
  * A claim address is lowercased before it is sent and before it keys the state
  * file, so one address can never hold two pending claims through case alone.
  */
-export function emailAddress(value: string | undefined): string {
+export function emailAddress(
+  value: string | undefined,
+  field = "email",
+): string {
   const normalized = (value ?? "").trim().toLowerCase();
   if (!email.safeParse(normalized).success) {
     throw new CliError(
       "INVALID_ARGUMENT",
       "A claim address must be one email address of at most 254 characters.",
-      ["email"],
+      [field],
     );
   }
   return normalized;

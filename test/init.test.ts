@@ -69,6 +69,8 @@ interface FixtureOptions {
   expiresAt?: string;
   /** Needed only when a run rotates before it ever enrolls. */
   ownerKey?: { x: string; y: string };
+  /** Whether the server reports that it emailed an `--owner-email` claim. */
+  claimEmailed?: boolean;
 }
 
 interface Fixture {
@@ -340,6 +342,31 @@ function fixture(options: FixtureOptions = {}): Fixture {
             createdAt: 1,
             revokedAt: null,
             replayed: false,
+          },
+        },
+        { status: 201 },
+      );
+    }
+
+    if (key === "POST /v1/workspace-claims") {
+      return Response.json(
+        {
+          data: {
+            claim: {
+              id: "77777777-7777-4777-8777-777777777777",
+              organizationId: ORGANIZATION,
+              email: body!.email,
+              role: "owner",
+              state: "pending",
+              expiresAt: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
+              createdAt: new Date().toISOString(),
+              acceptedAt: null,
+              revokedAt: null,
+            },
+            token: `dk_invite_${"i".repeat(43)}`,
+            claimUrl: `https://console.example.test/claim#token=dk_invite_${"i".repeat(43)}`,
+            replayed: false,
+            emailed: options.claimEmailed === true,
           },
         },
         { status: 201 },
@@ -1429,13 +1456,13 @@ test("init names the workspace, the inbox, and what to do next", async () => {
     {
       action: "claim_workspace",
       description:
-        "Give a person owner access to this workspace. The command prints a link to send them.",
+        "Get the work email of the person this workspace is for, then give them owner access. The command prints a link to send them.",
       command: "npx @skyporch/daykeeper-cli claim --email you@company.com",
     },
     {
       action: "open_console",
       description:
-        "Sign in to the console to see the inbox and add website or email channels.",
+        "The person you claimed it for signs in here with that email address to open the inbox.",
       url: "https://app.mydaykeeper.com",
     },
     {
@@ -1772,4 +1799,159 @@ test("another key with no URL uses the hosted API when the stored state is hoste
   const request = server.requests.at(-1)!;
   assert.equal(request.path, "/v1/tenants");
   assert.equal(request.headers.get("authorization"), `Bearer ${other}`);
+});
+
+test("init --owner-email hands the live inbox to its person in the same run", async () => {
+  const directory = await home();
+  const server = fixture({ claimEmailed: true });
+  const result = await init({
+    home: directory,
+    fixture: server,
+    args: ["--owner-email", "Sam@Acme.Example"],
+  });
+  assert.equal(result.exitCode, 0, result.output);
+  const data = result.envelope.data;
+  const issued = server.sent("POST", "/v1/workspace-claims");
+  assert.equal(issued.length, 1);
+  // Issued after activation, for the folded address, under a stored key.
+  assert.deepEqual(issued[0]!.body, { email: "sam@acme.example" });
+  const order = server.requests.map((request) => request.path);
+  assert(
+    order.indexOf("/v1/workspace-claims") >
+      order.lastIndexOf(`/v1/tenants/${TENANT}/inbox-activations`),
+  );
+  assert.equal(data.ownerClaim.claim.email, "sam@acme.example");
+  assert.match(data.ownerClaim.claimUrl, /#token=dk_invite_/);
+  assert.equal(data.ownerClaim.emailed, true);
+  assert.equal(data.ownerClaim.handoff.sendTo, "sam@acme.example");
+  assert.match(data.ownerClaim.handoff.message, /Daykeeper emailed this link/);
+  assert.match(data.ownerClaim.handoff.message, /expires in 72 hours/);
+  assert.match(
+    data.ownerClaim.handoff.reissueCommand,
+    /claim --email sam@acme\.example --reissue --origin /,
+  );
+  // The placeholder claim step is gone; the console step says who signs in.
+  assert.equal(
+    data.nextSteps.some(
+      (step: { action: string }) => step.action === "claim_workspace",
+    ),
+    false,
+  );
+  const state = await readStateFile(directory);
+  assert.equal(state.claims["sam@acme.example"].state, "pending");
+  assert(!JSON.stringify(state).includes("dk_invite_"));
+
+  // At a terminal the link and the handoff are printed under "Owner claim".
+  const again = await home();
+  const text = await run(
+    [
+      "init",
+      "--name",
+      "Acme Support",
+      "--origin",
+      ORIGIN,
+      "--home",
+      again,
+      "--owner-email",
+      "sam@acme.example",
+    ],
+    fixture(),
+    {},
+    { interactive: true },
+  );
+  assert.equal(text.exitCode, 0, text.output);
+  assert.match(
+    text.output,
+    /\nOwner claim\n  https:\/\/console\.example\.test\/claim#token=/,
+  );
+  assert.match(text.output, /Send this link to sam@acme\.example\./);
+});
+
+test("an owner claim that cannot be issued is a note on a live inbox, not a failed init", async () => {
+  const directory = await home();
+  const server = fixture({
+    once: {
+      "POST /v1/workspace-claims": [
+        () => apiError(503, "FEATURE_UNAVAILABLE"),
+        () => apiError(503, "FEATURE_UNAVAILABLE"),
+        () => apiError(503, "FEATURE_UNAVAILABLE"),
+      ],
+    },
+  });
+  const result = await init({
+    home: directory,
+    fixture: server,
+    args: ["--owner-email", "sam@acme.example"],
+  });
+  assert.equal(result.exitCode, 0, result.output);
+  assert.equal(result.envelope.data.ownerClaim.issued, false);
+  assert.equal(result.envelope.data.ownerClaim.code, "FEATURE_UNAVAILABLE");
+  const warning = result.envelope.warnings.find(
+    (item: { code: string }) => item.code === "OWNER_CLAIM_NOT_ISSUED",
+  );
+  assert.match(warning.message, /claim --email sam@acme\.example/);
+  // The claim step stays in the next steps, for that address.
+  assert(
+    result.envelope.data.nextSteps.some(
+      (step: { action: string; command: string }) =>
+        step.action === "claim_workspace" &&
+        step.command.includes("--email sam@acme.example"),
+    ),
+  );
+
+  const invalid = await init({
+    home: await home(),
+    fixture: fixture(),
+    args: ["--owner-email", "not an address"],
+  });
+  assert.equal(invalid.exitCode, 1);
+  assert.equal(invalid.envelope.error.code, "INVALID_ARGUMENT");
+  assert(invalid.envelope.error.fields.includes("owner-email"));
+});
+
+test("a rerun with a different --name says the stored workspace was kept", async () => {
+  const directory = await home();
+  await init({ home: directory, fixture: fixture() });
+  const lines: string[] = [];
+  const exitCode = await runCli(
+    [
+      "init",
+      "--name",
+      "Totally Different Co",
+      "--home",
+      directory,
+      "--origin",
+      ORIGIN,
+    ],
+    {
+      env: {},
+      stdin: Readable.from([]),
+      write: (line) => lines.push(line),
+      fetch: fixture({ trafficEnabled: [true] }).fetch,
+      clock: fakeClock().clock,
+    },
+  );
+  assert.equal(exitCode, 0, lines[0]);
+  const envelope = JSON.parse(lines[0]!);
+  assert.equal(envelope.data.workspace.name, "Acme Support");
+  const warning = envelope.warnings.find(
+    (item: { code: string }) => item.code === "NAME_IGNORED_ON_RESUME",
+  );
+  assert.match(warning.message, /"Acme Support"/);
+  assert.match(warning.message, /--name "Totally Different Co" was ignored/);
+});
+
+test("a refusal a rerun cannot fix does not tell a person to rerun", async () => {
+  const directory = await home();
+  await mkdir(directory, { recursive: true });
+  await chmod(directory, 0o755);
+  const insecure = await run(
+    ["init", "--name", "Acme Support", "--origin", ORIGIN, "--home", directory],
+    fixture(),
+    {},
+    { interactive: true },
+  );
+  assert.equal(insecure.exitCode, 1);
+  assert.match(insecure.output, /Code: STATE_INSECURE/);
+  assert.doesNotMatch(insecure.output, /Run the same command again/);
 });

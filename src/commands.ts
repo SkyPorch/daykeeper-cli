@@ -43,6 +43,7 @@ const commands: readonly Command[] = [
       "home",
       "wait-ms",
       "reveal-key",
+      "owner-email",
       "json",
     ],
     // The credential this command mints carries its own fixed scopes. The
@@ -241,6 +242,7 @@ const stringOptions = [
   "home",
   "wait-ms",
   "email",
+  "owner-email",
 ];
 const booleanOptions = ["token-stdin", "json", "help", "reveal-key", "reissue"];
 
