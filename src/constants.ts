@@ -18,5 +18,5 @@ export const HOSTED_CONSOLE_URL = "https://app.mydaykeeper.com";
 export const CLI_INVOCATION = "npx @skyporch/daykeeper-cli";
 
 export const SDK_PACKAGE = "@skyporch/daykeeper";
-export const MCP_PACKAGE = "@skyporch/daykeeper-mcp@0.2.0";
+export const MCP_PACKAGE = "@skyporch/daykeeper-mcp@0.3.0";
 export const REACT_NATIVE_PACKAGE = "@skyporch/daykeeper-react-native@0.1.0";

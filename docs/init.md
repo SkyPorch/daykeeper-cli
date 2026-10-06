@@ -217,7 +217,7 @@ Success envelope, `data` shape:
     "mcpServers": {
       "daykeeper": {
         "command": "npx",
-        "args": ["--yes", "@skyporch/daykeeper-mcp"],
+        "args": ["--yes", "@skyporch/daykeeper-mcp@0.3.0"],
         "env": {
           "DAYKEEPER_API_URL": "https://…",
           "DAYKEEPER_API_KEY": "<stored; see configPath>",
@@ -225,7 +225,8 @@ Success envelope, `data` shape:
           "DAYKEEPER_MCP_ENABLE_MUTATIONS": "true",
           "DAYKEEPER_MCP_ENABLE_INBOX_TOOLS": "true",
           "DAYKEEPER_MCP_ENABLE_ACTIVATION_TOOLS": "true",
-          "DAYKEEPER_MCP_ENABLE_OPERATOR_TOOLS": "true"
+          "DAYKEEPER_MCP_ENABLE_OPERATOR_TOOLS": "true",
+          "DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS": "true"
         }
       }
     }
@@ -265,11 +266,15 @@ and the step reached in `fields`.
 
 ## Compatibility
 
-- Bump the SDK pin to the published `@skyporch/daykeeper@0.2.0`. It ships
-  `DaykeeperOnboardingClient`, `DaykeeperMachineSigner`, `inboxes.get`,
+- The SDK pin is the published `@skyporch/daykeeper@0.3.0`. Since 0.2.0 it
+  ships `DaykeeperOnboardingClient`, `DaykeeperMachineSigner`, `inboxes.get`,
   `inboxActivations`, `tenants.getProvisioningOperation`, `customerSessions`,
-  and `entitlements`. Record it in `COMPATIBILITY.md`.
-- The MCP block targets the published `@skyporch/daykeeper-mcp@0.2.0`.
+  and `entitlements`; 0.3.0 adds `workspaceClaims`. Record it in
+  `COMPATIBILITY.md`.
+- The MCP block pins the published `@skyporch/daykeeper-mcp@0.3.0` and sets
+  `DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS=true`, so an agent using `mcp.json` can
+  create, list and revoke workspace claim links. Those tools work only under
+  the machine credential `init` stored, which is the key `mcp.json` carries.
 - Server behavior relied on: enrollment replay never re-reveals a token;
   `FREE_WORKSPACE_ALREADY_CLAIMED` on a second enrollment with the same key;
   one tenant per Free workspace; activation returns `FEATURE_UNAVAILABLE` when

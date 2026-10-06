@@ -525,8 +525,18 @@ test("a fresh run enrolls, provisions, activates, and writes configuration", asy
   assert.equal(mcp.mcpServers.daykeeper.env.DAYKEEPER_API_KEY, token);
   assert.deepEqual(mcp.mcpServers.daykeeper.args, [
     "--yes",
-    "@skyporch/daykeeper-mcp@0.2.0",
+    "@skyporch/daykeeper-mcp@0.3.0",
   ]);
+  // MCP 0.3.0 hides the workspace claim tools unless this flag is on; with it
+  // (and mutations, already on) the agent can create claim links itself.
+  assert.equal(
+    mcp.mcpServers.daykeeper.env.DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS,
+    "true",
+  );
+  assert.equal(
+    mcp.mcpServers.daykeeper.env.DAYKEEPER_MCP_ENABLE_MUTATIONS,
+    "true",
+  );
   assert.equal((await stat(join(directory, "mcp.json"))).mode & 0o777, 0o600);
 });
 

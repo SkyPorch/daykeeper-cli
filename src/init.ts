@@ -603,6 +603,7 @@ function mcpServers(apiUrl: string, key: string) {
         DAYKEEPER_MCP_ENABLE_INBOX_TOOLS: "true",
         DAYKEEPER_MCP_ENABLE_ACTIVATION_TOOLS: "true",
         DAYKEEPER_MCP_ENABLE_OPERATOR_TOOLS: "true",
+        DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS: "true",
       },
     },
   };

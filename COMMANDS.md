@@ -243,7 +243,7 @@ prints this envelope's `data`:
     "mcpServers": {
       "daykeeper": {
         "command": "npx",
-        "args": ["--yes", "@skyporch/daykeeper-mcp@0.2.0"],
+        "args": ["--yes", "@skyporch/daykeeper-mcp@0.3.0"],
         "env": {
           "DAYKEEPER_API_URL": "https://…",
           "DAYKEEPER_API_KEY": "<stored; see configPath>",
@@ -251,7 +251,8 @@ prints this envelope's `data`:
           "DAYKEEPER_MCP_ENABLE_MUTATIONS": "true",
           "DAYKEEPER_MCP_ENABLE_INBOX_TOOLS": "true",
           "DAYKEEPER_MCP_ENABLE_ACTIVATION_TOOLS": "true",
-          "DAYKEEPER_MCP_ENABLE_OPERATOR_TOOLS": "true"
+          "DAYKEEPER_MCP_ENABLE_OPERATOR_TOOLS": "true",
+          "DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS": "true"
         }
       }
     }
