@@ -9,6 +9,7 @@ pull request head is never an acceptable record.
 
 | CLI version | Management contract | Customer contract | SDK dependency              | Contract tag / commit                                                                                                                  |
 | ----------- | ------------------- | ----------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.4.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
 | 0.3.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
 | 0.2.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
 | 0.1.0       | v1.1.0              | not used          | `@skyporch/daykeeper` 0.2.0 | `v1.1.0` @ `c9a0175d0053f1a2d57c9329f6d3a36ec6acdb71` (SkyPorch/daykeeper-openapi, 2026-09-08); the tag the SDK 0.2.0 release recorded |
@@ -32,6 +33,14 @@ Notes:
   behavior: the stored credential is used by default, `DAYKEEPER_API_KEY` is
   canonical, and `DAYKEEPER_ACCESS_TOKEN` is a deprecated alias that fails with
   `AUTH_SOURCE_CONFLICT` when set to a different value. See `CHANGELOG.md`.
+- CLI 0.4.0 uses the same SDK and contract as 0.3.0. The `mcp.json` that
+  `init` writes pins `@skyporch/daykeeper-mcp@0.3.0` (built on the same SDK
+  0.3.0 and contract `v1.3.0`) with its claim tools enabled, so 0.4.0 must be
+  released only after MCP 0.3.0 is on npm.
+- `claim` and `init --owner-email` read an `emailed` boolean from the claim
+  create response. It is not in contract `v1.3.0`; the platform adds it as an
+  additive field (SkyPorch/daykeeper#306). When it is absent the CLI reports
+  `emailed: false` and tells the agent to send the link itself.
 - The tag/commit cell must be filled with a real `vMAJOR.MINOR.PATCH` tag and
   its commit SHA before any CLI release is cut. Releasing against an untagged
   contract is not permitted.

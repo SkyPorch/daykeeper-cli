@@ -1,6 +1,6 @@
 # Daykeeper CLI command contract
 
-Envelope version: `daykeeper.cli.v1`. CLI: `0.3.0`. Runtime management
+Envelope version: `daykeeper.cli.v1`. CLI: `0.4.0`. Runtime management
 SDK: `@skyporch/daykeeper@0.3.0`.
 
 ## Commands

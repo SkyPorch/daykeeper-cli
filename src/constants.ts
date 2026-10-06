@@ -1,4 +1,4 @@
-export const CLI_VERSION = "0.3.0";
+export const CLI_VERSION = "0.4.0";
 export const SDK_VERSION = "0.3.0";
 export const ENVELOPE_VERSION = "daykeeper.cli.v1";
 export const MAX_INPUT_BYTES = 512 * 1024;
