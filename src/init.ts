@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  DaykeeperApiError,
   DaykeeperClient,
   DaykeeperMachineSigner,
   DaykeeperOnboardingClient,
@@ -23,7 +24,9 @@ import {
   rotateCredential,
   type Clock,
 } from "./credential.ts";
+import { claimHandoff, followUpFlags, issueClaim } from "./claim.ts";
 import { CliError } from "./errors.ts";
+import { emailAddress } from "./schemas.ts";
 import { assertPinnedOrigin, resolveOrigins, type Origins } from "./origins.ts";
 import {
   MCP_FILE,
@@ -56,7 +59,7 @@ export const INIT_STEPS = [
   "inbox_activate",
 ] as const;
 export type InitStep = (typeof INIT_STEPS)[number];
-type FailureStep = InitStep | "preflight" | "state" | "config";
+type FailureStep = InitStep | "preflight" | "state" | "config" | "owner_claim";
 
 /** Carries the step a failure reached so the envelope can report it. */
 export class InitStepError extends Error {
@@ -84,6 +87,8 @@ export interface InitContext {
   addSecret: (secret: string) => void;
   /** Return a placeholder that is replaced with the literal value after redaction. */
   reveal: (secret: string) => string;
+  /** Add a non-fatal note to the printed envelope. */
+  warn?: (warning: { code: string; message: string }) => void;
 }
 
 export { realClock } from "./credential.ts";
@@ -97,6 +102,8 @@ interface InitArguments extends Origins {
   homeOption: string | undefined;
   waitMs: number;
   revealKey: boolean;
+  /** `--owner-email`: issue the owner claim for this address once the inbox is live. */
+  ownerEmail: string | undefined;
 }
 
 export async function runInit(
@@ -201,6 +208,14 @@ async function execute(
   if (typeof privateScalar === "string") context.addSecret(privateScalar);
 
   // 3. Enroll. The intent is persisted before the first mutation is sent.
+  // A home holds one workspace. A rerun with another --name resumes that
+  // workspace; say so instead of silently ignoring the new name.
+  const storedName = state.enrollment?.name;
+  if (storedName !== undefined && storedName !== args.name)
+    context.warn?.({
+      code: "NAME_IGNORED_ON_RESUME",
+      message: `This home already holds the workspace "${storedName}", so --name "${args.name}" was ignored. Use a different --home to create another workspace.`,
+    });
   if (state.workspace) {
     skipped();
   } else {
@@ -462,32 +477,63 @@ async function execute(
   // The console only exists for the hosted origin; a self-hosted origin serves
   // its own, which this command cannot know.
   const consoleUrl = args.origin === HOSTED_ORIGIN ? HOSTED_CONSOLE_URL : null;
-  const followUp = [
-    ...(args.origin === HOSTED_ORIGIN ? [] : [`--origin ${args.origin}`]),
-    ...(args.homeOption ? [`--home ${JSON.stringify(args.homeOption)}`] : []),
-  ].join(" ");
+  const followUp = followUpFlags(args);
   const withFollowUp = (command: string) =>
     followUp ? `${command} ${followUp}` : command;
+
+  // 9. Hand the workspace to its person. The inbox is already live, so a
+  // claim that cannot be issued is a note on a successful run, never a
+  // failed init: `claim --email` can always issue it later.
+  let ownerClaim: Record<string, unknown> | undefined;
+  if (args.ownerEmail) {
+    progress.setStep("owner_claim");
+    try {
+      const issued = await issueClaim(client, state, save, attempts, {
+        email: args.ownerEmail,
+        reissue: false,
+      });
+      ownerClaim = {
+        ...issued,
+        handoff: claimHandoff(issued, args.ownerEmail, followUp),
+      };
+    } catch (error) {
+      const code =
+        error instanceof DaykeeperApiError || error instanceof CliError
+          ? error.code
+          : "CLAIM_NOT_ISSUED";
+      context.warn?.({
+        code: "OWNER_CLAIM_NOT_ISSUED",
+        message: `The inbox is ready, but the owner claim for ${args.ownerEmail} was not issued (${code}). Run: ${withFollowUp(`${CLI_INVOCATION} claim --email ${args.ownerEmail}`)}`,
+      });
+      ownerClaim = { email: args.ownerEmail, issued: false, code };
+    }
+  }
 
   return {
     workspaceId: workspace.organizationId,
     inboxId: tenantId,
     consoleUrl,
+    ...(ownerClaim ? { ownerClaim } : {}),
     nextSteps: [
-      {
-        action: "claim_workspace",
-        description:
-          "Give a person owner access to this workspace. The command prints a link to send them.",
-        command: withFollowUp(
-          `${CLI_INVOCATION} claim --email you@company.com`,
-        ),
-      },
+      ...(ownerClaim?.claimUrl
+        ? []
+        : [
+            {
+              action: "claim_workspace",
+              description: args.ownerEmail
+                ? `Give ${args.ownerEmail} owner access to this workspace. The command prints a link to send them.`
+                : "Get the work email of the person this workspace is for, then give them owner access. The command prints a link to send them.",
+              command: withFollowUp(
+                `${CLI_INVOCATION} claim --email ${args.ownerEmail ?? "you@company.com"}`,
+              ),
+            },
+          ]),
       ...(consoleUrl
         ? [
             {
               action: "open_console",
               description:
-                "Sign in to the console to see the inbox and add website or email channels.",
+                "The person you claimed it for signs in here with that email address to open the inbox.",
               url: consoleUrl,
             },
           ]
@@ -644,10 +690,16 @@ function parseInitArguments(
     );
   }
 
+  const ownerEmailValue = text(options["owner-email"]);
+  const ownerEmail =
+    ownerEmailValue === undefined
+      ? undefined
+      : emailAddress(ownerEmailValue, "owner-email");
   return {
     name,
     slug,
     locale,
+    ownerEmail,
     home: resolveHome(text(options.home), env),
     homeOption: text(options.home),
     waitMs,

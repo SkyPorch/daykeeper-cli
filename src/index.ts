@@ -18,7 +18,7 @@ import {
 } from "./commands.ts";
 import { CliError, errorEnvelope, reportedOutcomeUnknown } from "./errors.ts";
 import { InitStepError, realClock, runInit, type InitClock } from "./init.ts";
-import { renderInitText } from "./human.ts";
+import { renderClaimText, renderInitText } from "./human.ts";
 import { resolveOrigins } from "./origins.ts";
 import { STATE_FILE, readState, resolveHome, type InitState } from "./state.ts";
 import { openStoredCredential } from "./stored.ts";
@@ -181,6 +181,7 @@ export async function runCli(
         name === "init"
           ? await runInit({
               ...stateful,
+              warn: (warning) => warnings.push(warning),
               reveal: (secret) => {
                 const placeholder = `daykeeper-cli-revealed-${randomUUID()}`;
                 revealed.set(placeholder, secret);
@@ -415,11 +416,17 @@ export async function runCli(
             : [
                 ...new Set([
                   ...projected.nextActions,
-                  ...(initFailure.resumable ? ["run_init_again"] : []),
+                  // A refusal the API says is final (a 4xx that is not
+                  // retryable) comes back the same on a rerun, so a rerun is
+                  // not offered for it even though the state was saved.
+                  ...(initFailure.resumable &&
+                  !(projected.kind === "api" && projected.retryable !== true)
+                    ? ["run_init_again"]
+                    : []),
                 ]),
               ],
         }
-      : projected;
+      : claimRefusal(parsed?.command?.name, projected);
     const uncertainMutation =
       parsed?.command?.name === "init"
         ? // One `init` sends both reads and mutations, so only the SDK's own
@@ -492,6 +499,15 @@ export async function runCli(
     // Rendered from the already-redacted envelope, so text mode can never
     // print more than JSON mode would.
     context.write(renderInitText(JSON.parse(output)));
+    return exitCode;
+  }
+  if (
+    context.interactive &&
+    (parsed?.command?.name === "claim" ||
+      parsed?.command?.name === "claim status") &&
+    parsed.options.json !== true
+  ) {
+    context.write(renderClaimText(JSON.parse(output)));
     return exitCode;
   }
   context.write(`${output}\n`);
@@ -606,4 +622,42 @@ function abortable<Value>(
       .then(resolve, reject)
       .finally(() => signal.removeEventListener("abort", abort));
   });
+}
+
+/**
+ * The claim refusals an agent can act on, in words it can relay. The API's
+ * code, status and kind are kept; only the message and next actions change.
+ */
+const CLAIM_REFUSALS: Readonly<
+  Record<string, { message: string; nextActions: string[] }>
+> = {
+  INVITATION_ALREADY_PENDING: {
+    message:
+      "A claim for this address is already waiting. Its link was shown when it was issued. Add --reissue to cancel it and print a new link.",
+    nextActions: ["reissue_claim"],
+  },
+  ALREADY_A_MEMBER: {
+    message:
+      "This address already belongs to the workspace, so there is nothing to claim. That person can sign in to the Daykeeper console now.",
+    nextActions: ["open_console"],
+  },
+  FEATURE_UNAVAILABLE: {
+    message:
+      "This Daykeeper installation does not issue claim links yet (its console origin is not configured). Ask the Daykeeper operator.",
+    nextActions: ["contact_daykeeper_operator"],
+  },
+  INVITATION_LIMIT_REACHED: {
+    message:
+      "This workspace issued too many claims in the last hour. Try again later.",
+    nextActions: ["try_later"],
+  },
+};
+
+function claimRefusal<T extends { kind: string; code: string }>(
+  command: string | undefined,
+  projected: T,
+): T {
+  if (command !== "claim" || projected.kind !== "api") return projected;
+  const known = CLAIM_REFUSALS[projected.code];
+  return known ? { ...projected, ...known } : projected;
 }

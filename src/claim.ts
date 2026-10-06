@@ -1,5 +1,6 @@
 import { DaykeeperClient, generateIdempotencyKey } from "@skyporch/daykeeper";
 import type { Clock, Retries } from "./credential.ts";
+import { CLI_INVOCATION, HOSTED_ORIGIN } from "./constants.ts";
 import { CliError } from "./errors.ts";
 import { resolveOrigins, type Origins } from "./origins.ts";
 import { emailAddress } from "./schemas.ts";
@@ -27,6 +28,8 @@ export interface ClaimContext {
 interface ClaimArguments extends Origins {
   email: string;
   home: string;
+  /** The `--home` the caller passed, repeated in printed follow-up commands. */
+  homeOption: string | undefined;
   reissue: boolean;
 }
 
@@ -88,15 +91,54 @@ async function create(
   args: ClaimArguments,
   rotated: boolean,
 ): Promise<Record<string, unknown>> {
+  const issued = await issueClaim(client, state, save, attempts, {
+    email: args.email,
+    reissue: args.reissue,
+  });
+  return {
+    ...issued,
+    handoff: claimHandoff(issued, args.email, followUpFlags(args)),
+    credentialRotated: rotated,
+  };
+}
+
+/** What `claim` (and `init --owner-email`) report after issuing a claim. */
+export interface IssuedClaim {
+  claim: {
+    id: string;
+    email: string;
+    state: string;
+    expiresAt: string;
+    [key: string]: unknown;
+  };
+  claimUrl: string | null;
+  replayed: boolean;
+  /** Whether Daykeeper emailed the link to the address on this request. */
+  emailed: boolean;
+  nextActions: string[];
+  revokedClaimId?: string;
+}
+
+/**
+ * Issue, replay, or reissue the owner claim for one address, under the stored
+ * credential. Shared by `claim` and by `init --owner-email`.
+ */
+export async function issueClaim(
+  client: DaykeeperClient,
+  state: InitState,
+  save: () => Promise<void>,
+  attempts: Retries,
+  input: { email: string; reissue: boolean },
+): Promise<IssuedClaim> {
   state.claims ??= {};
   const claims = state.claims;
-  let record: ClaimState | undefined = claims[args.email];
+  let record: ClaimState | undefined = claims[input.email];
 
   // Reissuing revokes the pending claim first, so the address never holds two,
   // and always retires the stored key: replaying it would return the claim the
   // caller just asked to replace, which is the opposite of a reissue.
   let revoked: string | null = null;
-  if (args.reissue) {
+  if (input.reissue) {
     if (record?.id && record.state === "pending") {
       await attempts.request(() => client.workspaceClaims.revoke(record!.id!));
       revoked = record.id;
@@ -107,9 +149,9 @@ async function create(
   const idempotencyKey = record?.idempotencyKey ?? generateIdempotencyKey();
   // The intent is persisted before the mutation is sent, so an interrupted run
   // replays this key rather than issuing a second claim for the same address.
-  claims[args.email] = {
+  claims[input.email] = {
     id: record?.id ?? null,
-    email: args.email,
+    email: input.email,
     idempotencyKey,
     expiresAt: record?.expiresAt ?? null,
     state: record?.state ?? null,
@@ -118,11 +160,11 @@ async function create(
   await save();
 
   const result = await attempts.request(() =>
-    client.workspaceClaims.create({ email: args.email }, { idempotencyKey }),
+    client.workspaceClaims.create({ email: input.email }, { idempotencyKey }),
   );
-  claims[args.email] = {
+  claims[input.email] = {
     id: result.claim.id,
-    email: args.email,
+    email: input.email,
     idempotencyKey,
     expiresAt: result.claim.expiresAt,
     state: result.claim.state,
@@ -136,14 +178,93 @@ async function create(
   // therefore NOT added to the redaction list, unlike the machine credential.
   // `result.token` itself is dropped: the URL already delivers it, and a bare
   // token in the envelope would invite storing it.
+  //
+  // `emailed` is additive in the platform's response (servers that do not
+  // send claim emails omit it), so anything but `true` reads as not emailed.
+  const emailed = (result as unknown as { emailed?: unknown }).emailed === true;
   return {
     claim: result.claim,
     claimUrl: result.claimUrl,
     replayed: result.replayed,
+    emailed,
     nextActions: result.claimUrl === null ? ["reissue_claim"] : [],
     ...(revoked ? { revokedClaimId: revoked } : {}),
-    credentialRotated: rotated,
   };
+}
+
+/**
+ * The plain-language handoff: who the link is for, how long it lasts, and the
+ * exact command that replaces it. Both `claim` and `init --owner-email` put it
+ * in the envelope, so an agent can relay it word for word.
+ */
+export function claimHandoff(
+  issued: IssuedClaim,
+  email: string,
+  followUp: string,
+): {
+  sendTo: string;
+  expiresAt: string;
+  reissueCommand: string;
+  message: string;
+} {
+  const reissueCommand = [
+    `${CLI_INVOCATION} claim --email ${email} --reissue`,
+    followUp,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const expiry = describeExpiry(issued.claim.expiresAt);
+  const message = issued.claimUrl
+    ? [
+        issued.emailed
+          ? `Daykeeper emailed this link to ${email}. You can also send it yourself.`
+          : `Send this link to ${email}.`,
+        `It works once, only for someone signed in as ${email}, and expires ${expiry}.`,
+        `They sign in to Daykeeper with that address and become an owner of this workspace; the agent credential keeps working.`,
+        `If the link is lost or expires, run: ${reissueCommand}`,
+      ].join(" ")
+    : [
+        `A claim for ${email} is already waiting and expires ${expiry}.`,
+        `Its link is only shown when it is issued.`,
+        `To print a new link, run: ${reissueCommand}`,
+      ].join(" ");
+  return {
+    sendTo: email,
+    expiresAt: issued.claim.expiresAt,
+    reissueCommand,
+    message,
+  };
+}
+
+/** "in 72 hours (on 9 October 2026 at 08:26 UTC)". */
+export function describeExpiry(expiresAt: string, now = Date.now()): string {
+  const at = new Date(expiresAt);
+  if (!Number.isFinite(at.getTime())) return "soon";
+  const hours = Math.max(0, Math.round((at.getTime() - now) / 3_600_000));
+  const day = at.toLocaleDateString("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  const time = at.toLocaleTimeString("en-GB", {
+    timeZone: "UTC",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `in ${hours} hour${hours === 1 ? "" : "s"} (on ${day} at ${time} UTC)`;
+}
+
+/** The flags a follow-up command needs to reach the same origin and home. */
+export function followUpFlags(args: {
+  origin: string;
+  homeOption?: string;
+}): string {
+  return [
+    ...(args.origin === HOSTED_ORIGIN ? [] : [`--origin ${args.origin}`]),
+    ...(args.homeOption ? [`--home ${JSON.stringify(args.homeOption)}`] : []),
+  ].join(" ");
 }
 
 async function status(
@@ -199,6 +320,7 @@ function parseClaimArguments(
   return {
     email: subcommand === "status" ? "" : emailAddress(text(options.email)),
     home: resolveHome(text(options.home), env),
+    homeOption: text(options.home),
     reissue: options.reissue === true,
     ...resolveOrigins(options, env),
   };

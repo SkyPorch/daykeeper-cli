@@ -299,7 +299,9 @@ both refused.
 The agent page on the website, publishing the CLI, paid plans, website and email
 inboxes, and customer-session minting from the CLI. Each is a separate change.
 
-Human claim of an agent-created workspace was out of scope here and is now
+`init --owner-email <address>` now issues that claim in the same run, once
+the inbox is live (a claim that cannot be issued is a warning, never a failed
+init). Human claim of an agent-created workspace was out of scope here and is now
 specified separately: see `daykeeper claim` in `COMMANDS.md` and
 `docs/operations/workspace-claim-v1.md` in the platform repository. `claim`
 reads the state file described above, reuses this command's origin pinning and

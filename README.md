@@ -29,9 +29,10 @@ Every other command then uses the stored credential, with nothing to export:
 npx @skyporch/daykeeper-cli tenants list
 ```
 
-Hand the workspace to a person:
+Hand the workspace to a person, in the same run or later:
 
 ```sh
+npx @skyporch/daykeeper-cli init --name "Acme Support" --owner-email you@company.com
 npx @skyporch/daykeeper-cli claim --email you@company.com
 ```
 
@@ -40,8 +41,10 @@ accepts it. Send the link to that person; they sign in at
 https://app.mydaykeeper.com and own the workspace. The link carries its token in
 the URL fragment and is printed unredacted, once, because it is the handoff —
 treat it like a password reset link. It is never written to the state file.
-Rerunning returns the pending claim without a link; `--reissue` revokes it and
-issues a new one, and `claim status` lists what the server holds.
+The output says who to send it to, that it expires in 72 hours, and the exact
+`--reissue` command that replaces it. Rerunning returns
+the pending claim without a link; `--reissue` revokes it and issues a new one,
+and `claim status` lists what the server holds.
 
 Install it globally to type `daykeeper` instead of `npx @skyporch/daykeeper-cli`:
 

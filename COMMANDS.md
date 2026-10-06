@@ -107,6 +107,7 @@ daykeeper init --name "Acme Support" --plan free --json
 | `--home <dir>`                                    | no       | Where state lives. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`, then `~/.config/daykeeper`. |
 | `--wait-ms <n>`                                   | no       | Budget for provisioning polling and rate-limit sleeps, 10000–900000. Default 300000.                    |
 | `--reveal-key`                                    | no       | Print the literal credential in the JSON output. Off by default.                                        |
+| `--owner-email <address>`                         | no       | Once the inbox is live, issue the owner claim for this person in the same run (see `claim`).            |
 | `--json`                                          | no       | Print the JSON envelope even when stdout is a terminal.                                                 |
 
 `--timeout-ms` applies per request; `--wait-ms` bounds provisioning polling and
@@ -194,12 +195,12 @@ prints this envelope's `data`:
   "nextSteps": [
     {
       "action": "claim_workspace",
-      "description": "Give a person owner access to this workspace. The command prints a link to send them.",
+      "description": "Get the work email of the person this workspace is for, then give them owner access. The command prints a link to send them.",
       "command": "npx @skyporch/daykeeper-cli claim --email you@company.com"
     },
     {
       "action": "open_console",
-      "description": "Sign in to the console to see the inbox and add website or email channels.",
+      "description": "The person you claimed it for signs in here with that email address to open the inbox.",
       "url": "https://app.mydaykeeper.com"
     },
     {
@@ -309,7 +310,7 @@ daykeeper claim status
 | `--origin <https url>`                            | no       | As for `init`, and pinned the same way. Env `DAYKEEPER_ORIGIN`.                                        |
 | `--onboarding-url`, `--base-url`, `--gateway-url` | no       | Per-service overrides, as for `init`.                                                                  |
 | `--home <dir>`                                    | no       | Where `init` stored its state. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`.                |
-| `--json`                                          | no       | Accepted for symmetry. Output is always JSON.                                                          |
+| `--json`                                          | no       | Keep the JSON envelope at a terminal. Without it, a terminal gets readable text.                       |
 
 `claim` reads the state file `init` wrote and runs under the credential stored
 there. Like `init`, it refuses `--token-stdin`, and a `DAYKEEPER_API_KEY` or
@@ -328,8 +329,9 @@ bounded 60-second rate-limit sleep, and a longer delay refuses with a resumable
 ### The claim URL is a secret, printed on purpose
 
 `claimUrl` carries the invitation token in its URL fragment. It is printed
-unredacted, once, because it is the handoff: there is no email delivery, and the
-agent is the only party that can give it to a person. It is therefore **not**
+unredacted, once, because it is the handoff: unless the server reports
+`emailed: true` (an installation that emails claim links), the agent is the only
+party that can give it to a person. It is therefore **not**
 added to the redaction list, unlike the machine credential and the owner private
 key, which stay redacted. The state file records the claim id, address, expiry,
 and idempotency key, and **never** the token or the URL. Treat the printed link
@@ -366,10 +368,28 @@ rerun replays the interrupted intent. `claim status` sends no mutation.
   },
   "claimUrl": "https://console…/claim#token=dk_invite_…",
   "replayed": false,
+  "emailed": false,
   "nextActions": [],
+  "handoff": {
+    "sendTo": "gabriel@acme.example",
+    "expiresAt": "…",
+    "reissueCommand": "npx @skyporch/daykeeper-cli claim --email gabriel@acme.example --reissue",
+    "message": "Send this link to gabriel@acme.example. It works once, only for someone signed in as gabriel@acme.example, and expires in 72 hours (on …). They sign in to Daykeeper with that address and become an owner of this workspace; the agent credential keeps working. If the link is lost or expires, run: …"
+  },
   "credentialRotated": false
 }
 ```
+
+`emailed` is `true` only when the server emailed the link on this request; a
+server that sends no claim emails omits it and the CLI reports `false`.
+`handoff.message` is written to be relayed to a person as is. At a terminal
+without `--json`, `claim` prints the link and that message as text.
+
+`init --owner-email <address>` issues the same claim right after the inbox is
+live and reports it as `data.ownerClaim` (the fields above plus `handoff`). A
+claim that cannot be issued never fails `init`: `ownerClaim` is
+`{ "email", "issued": false, "code" }`, a `OWNER_CLAIM_NOT_ISSUED` warning names
+the `claim` command to run, and the `claim_workspace` next step stays.
 
 `claim status` returns `{ "claims": [claim…], "reconciled": { "updated": 0,
 "forgotten": 0 }, "credentialRotated": false }`.
@@ -379,9 +399,12 @@ rerun replays the interrupted intent. `claim status` sends no mutation.
 `claim` adds `INIT_REQUIRED` with `nextActions: ["run_init"]`, and reuses
 `STATE_UNREADABLE`, `STATE_INSECURE`, `STATE_ORIGIN_MISMATCH`, `RATE_LIMITED`,
 and `CREDENTIAL_UNRECOVERABLE` from `init`. Server refusals keep their own
-codes: `INVITATION_ALREADY_PENDING` when a different intent is sent for an
-address that already holds a pending claim, `ALREADY_A_MEMBER`, `RATE_LIMITED`,
-and `FEATURE_UNAVAILABLE` when the deployment has no console origin configured.
+codes, status and `kind: "api"`, with a message that says what to do:
+`INVITATION_ALREADY_PENDING` when a different intent is sent for an address that
+already holds a pending claim (next action `reissue_claim`), `ALREADY_A_MEMBER`
+(`open_console`: that person can sign in now), `INVITATION_LIMIT_REACHED`
+(`try_later`), `RATE_LIMITED`, and `FEATURE_UNAVAILABLE` when the deployment has
+no console origin configured (`contact_daykeeper_operator`).
 A claim whose outcome is lost to transport failure, timeout, cancellation, or a
 `5xx` reports `mutationOutcome: "unknown"` with
 `nextActions: ["run_claim_status", "reuse_original_idempotency_key"]`; the

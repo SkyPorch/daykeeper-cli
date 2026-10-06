@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- `init --owner-email <address>` issues the owner claim as soon as the inbox
+  is live and reports it as `data.ownerClaim`. A claim that cannot be issued
+  never fails `init`; it adds an `OWNER_CLAIM_NOT_ISSUED` warning naming the
+  `claim` command to run.
+- `claim` output carries `emailed` (the platform's additive field; `false`
+  when absent) and a `handoff` object: who to send the link to, its expiry, the
+  exact `--reissue` command, and a message to relay as is. At a terminal
+  without `--json`, `claim` and `claim status` print readable text.
+
+### Changed
+
+- `claim` refusals keep their API code and status but say what to do:
+  `INVITATION_ALREADY_PENDING`, `ALREADY_A_MEMBER`, `FEATURE_UNAVAILABLE`,
+  `INVITATION_LIMIT_REACHED`.
+- A rerun of `init` with a different `--name` adds a `NAME_IGNORED_ON_RESUME`
+  warning instead of ignoring the name silently.
+- An API refusal the server marks final no longer gets `run_init_again`, and
+  terminal text only says "Run the same command again" for a retryable
+  failure (`STATE_INSECURE`, for example, says what to fix instead).
+- The `claim_workspace` and `open_console` next steps say who the claim is for
+  and that the person signs in with that address.
+
 ## 0.3.0 (2026-10-01)
 
 Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.

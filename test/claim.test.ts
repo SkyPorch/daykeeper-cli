@@ -56,6 +56,8 @@ interface FixtureOptions {
   ownerKey?: { x: string; y: string };
   /** Keyed by `METHOD /path`; each entry answers one request, in order. */
   once?: Record<string, (() => Promise<Response> | Response)[]>;
+  /** The server's additive `emailed` field on a new claim. */
+  emailed?: boolean;
 }
 
 interface Fixture {
@@ -179,6 +181,9 @@ function fixture(options: FixtureOptions = {}): Fixture {
             token,
             claimUrl: `${CONSOLE}/claim#token=${token}`,
             replayed: false,
+            ...(options.emailed === undefined
+              ? {}
+              : { emailed: options.emailed }),
           },
         },
         { status: 201 },
@@ -739,4 +744,153 @@ test("claim runs with the DAYKEEPER_API_KEY init printed exported, and refuses a
   assert.equal(other.envelope.error.code, "INVALID_ARGUMENT");
   assert.deepEqual(other.envelope.error.fields, ["DAYKEEPER_API_KEY"]);
   assert.equal(server.requests.length, before);
+});
+
+test("a claim says who the link is for, when it expires and how to replace it", async () => {
+  const directory = await home();
+  const signer = await seedState(directory);
+  const result = await claim({
+    home: directory,
+    fixture: fixture({ ownerKey: signer.publicKey }),
+  });
+  assert.equal(result.exitCode, 0, result.output);
+  const data = result.envelope.data;
+  // A server that sends no claim emails omits the field: not emailed.
+  assert.equal(data.emailed, false);
+  assert.equal(data.handoff.sendTo, EMAIL);
+  assert.equal(data.handoff.expiresAt, data.claim.expiresAt);
+  assert.equal(
+    data.handoff.reissueCommand,
+    `npx @skyporch/daykeeper-cli claim --email ${EMAIL} --reissue --origin ${ORIGIN} --home ${JSON.stringify(directory)}`,
+  );
+  assert.match(
+    data.handoff.message,
+    new RegExp(`^Send this link to ${EMAIL}\\.`),
+  );
+  assert.match(
+    data.handoff.message,
+    /works once, only for someone signed in as/,
+  );
+  assert.match(data.handoff.message, /expires in 72 hours \(on /);
+  assert.match(data.handoff.message, /agent credential keeps working/);
+
+  const emailed = await claim({
+    home: await (async () => {
+      const other = await home();
+      await seedState(other);
+      return other;
+    })(),
+    fixture: fixture({ emailed: true }),
+  });
+  assert.equal(emailed.envelope.data.emailed, true);
+  assert.match(
+    emailed.envelope.data.handoff.message,
+    new RegExp(`^Daykeeper emailed this link to ${EMAIL}\\.`),
+  );
+
+  // A replay explains why there is no link, and how to get one.
+  const replay = await claim({
+    home: directory,
+    fixture: fixture({ ownerKey: signer.publicKey, replay: true }),
+  });
+  assert.equal(replay.envelope.data.claimUrl, null);
+  assert.match(
+    replay.envelope.data.handoff.message,
+    /already waiting and expires in 72 hours/,
+  );
+  assert.match(replay.envelope.data.handoff.message, /--reissue/);
+});
+
+test("claim prints readable text for a person at a terminal", async () => {
+  const directory = await home();
+  await seedState(directory);
+  const lines: string[] = [];
+  const exitCode = await runCli(
+    ["claim", "--email", EMAIL, "--home", directory, "--origin", ORIGIN],
+    {
+      env: {},
+      stdin: Readable.from([]),
+      write: (line) => lines.push(line),
+      fetch: fixture().fetch,
+      clock: fakeClock().clock,
+      interactive: true,
+    },
+  );
+  assert.equal(exitCode, 0, lines[0]);
+  const text = lines[0]!;
+  assert.throws(() => JSON.parse(text));
+  assert.match(
+    text,
+    new RegExp(
+      `^Claim link for ${EMAIL}\n\n  ${CONSOLE}/claim#token=dk_invite_`,
+    ),
+  );
+  assert.match(text, /Send this link to/);
+  assert.match(text, /--reissue/);
+
+  const refused = await runCli(
+    ["claim", "--email", EMAIL, "--home", directory, "--origin", ORIGIN],
+    {
+      env: {},
+      stdin: Readable.from([]),
+      write: (line) => lines.push(line),
+      fetch: fixture({
+        once: {
+          "POST /v1/workspace-claims": [
+            () => apiError(409, "ALREADY_A_MEMBER"),
+          ],
+        },
+      }).fetch,
+      clock: fakeClock().clock,
+      interactive: true,
+    },
+  );
+  assert.equal(refused, 1);
+  assert.match(
+    lines.at(-1)!,
+    /^Daykeeper claim stopped: This address already belongs to the workspace/,
+  );
+});
+
+test("claim refusals say what to do in words, keeping the API code and status", async () => {
+  for (const [status, code, message, nextActions] of [
+    [
+      409,
+      "ALREADY_A_MEMBER",
+      /already belongs to the workspace/,
+      ["open_console"],
+    ],
+    [409, "INVITATION_ALREADY_PENDING", /Add --reissue/, ["reissue_claim"]],
+    [
+      503,
+      "FEATURE_UNAVAILABLE",
+      /does not issue claim links/,
+      ["contact_daykeeper_operator"],
+    ],
+    [
+      429,
+      "INVITATION_LIMIT_REACHED",
+      /too many claims in the last hour/,
+      ["try_later"],
+    ],
+  ] as const) {
+    const directory = await home();
+    await seedState(directory);
+    const responses = Array.from(
+      { length: 4 },
+      () => () => apiError(status, code),
+    );
+    const result = await claim({
+      home: directory,
+      fixture: fixture({ once: { "POST /v1/workspace-claims": responses } }),
+    });
+    assert.equal(result.exitCode, 1, code);
+    const error = result.envelope.error;
+    assert.equal(error.kind, "api", code);
+    assert.equal(error.code, code);
+    assert.equal(error.status, status);
+    assert.match(error.message, message, code);
+    for (const action of nextActions)
+      assert(error.nextActions.includes(action), `${code}: ${action}`);
+  }
 });
