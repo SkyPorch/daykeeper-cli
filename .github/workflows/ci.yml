@@ -46,7 +46,7 @@ jobs:
         node: ${{ github.event_name == 'pull_request' && fromJSON('[22]') || fromJSON('[20, 22, 24]') }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.8.0
       - uses: actions/setup-node@v4
