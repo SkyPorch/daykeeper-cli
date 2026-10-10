@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (2026-10-06)
+## 0.4.0 (2026-10-10)
 
 Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.
 MCP config: `@skyporch/daykeeper-mcp@0.3.0`.
