@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-10-10)
+
+Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.
+MCP config: `@skyporch/daykeeper-mcp@0.3.0`.
 
 ### Added
 
@@ -15,6 +18,10 @@
 
 ### Changed
 
+- The `mcp.json` that `init` writes pins `@skyporch/daykeeper-mcp@0.3.0`
+  (was 0.2.0) and sets `DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS=true`, so an agent set
+  up by `init` can create, list and revoke workspace claim links over MCP.
+  Rerun `init` to rewrite an existing `mcp.json`.
 - `claim` refusals keep their API code and status but say what to do:
   `INVITATION_ALREADY_PENDING`, `ALREADY_A_MEMBER`, `FEATURE_UNAVAILABLE`,
   `INVITATION_LIMIT_REACHED`.

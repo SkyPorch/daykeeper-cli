@@ -6,11 +6,11 @@ code. This is not a license gate.
 ## Provenance status
 
 `@skyporch/daykeeper-cli` `0.1.0` and `0.2.0` were published by hand and carry
-**no provenance attestation**. `0.3.0` is the first release meant to go through
-`release.yml`. Its first run needs the npm trusted publisher and the
-`DAYKEEPER_RELEASE_APPROVED` variable from the bootstrap steps below. A 401
-from `npm stage publish` on that run usually means the trusted publisher is
-missing or does not match the repository, workflow and environment.
+**no provenance attestation**. `0.3.0` was the first release through
+`release.yml` and carries an SLSA provenance attestation; every later release
+goes the same way. A 401 from `npm stage publish` usually means the trusted
+publisher is missing or does not match the repository, workflow and
+environment.
 
 Two sibling packages were published by hand and are affected:
 `@skyporch/daykeeper@0.1.0` and `@skyporch/daykeeper-react-native@0.1.0` were
@@ -22,13 +22,14 @@ are immutable, and an attestation cannot be attached after the fact. The fix is
 forward-only: the first workflow-driven release of each package, publishing with
 `--provenance` through trusted publishing, is what produces a real attestation.
 `@skyporch/daykeeper` has released through its `release.yml` with provenance
-since 0.2.0; this repository's `release.yml` has not run yet.
+since 0.2.0; this repository's `release.yml` has since 0.3.0.
 
 ## Bootstrap approval
 
 Before the first workflow release, a maintainer must complete these steps.
-Steps 1 to 4 were done for the hand-published 0.1.0 and 0.2.0; 0.3.0 still
-needs steps 5 and 6. Do not hand-publish 0.3.0 to skip them.
+Steps 1 to 4 were done for the hand-published 0.1.0 and 0.2.0, and steps 5 and
+6 before the 0.3.0 workflow release. Do not hand-publish a release to skip
+them.
 
 1. Review and merge the implementation and its complete test evidence.
 2. Audit the repository history and package contents for credentials, customer
