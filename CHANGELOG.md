@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased (0.5.0)
+
+Runtime SDK: `@skyporch/daykeeper@0.7.0`; management contract tag `v1.10.0`.
+MCP config: `@skyporch/daykeeper-mcp@0.5.0`. Needs a server with migration
+0119 (`SkyPorch/daykeeper`, open workspace claims).
+
+### Added
+
+- Every `init` ends with a way for a person to own the inbox. Without
+  `--owner-email` it issues an open claim link (whoever opens it first and
+  signs in owns the workspace) and reports it as `data.ownerClaim` with
+  `open: true`.
+- `data.handoff` at the top of the `init` output: the message to relay to the
+  agent's person, which now says that until the inbox is claimed customer
+  messages reach only the agent and nobody is emailed about them. At a
+  terminal the handoff prints first.
+- `init --connect` prints the link on stderr, opens it in the browser at a
+  terminal, and waits (`--connect-wait-ms`, default 180000) for a person to
+  accept it, then reports `connected` and `owner`. A timeout is a successful
+  run with an `OWNER_NOT_CONNECTED` warning.
+- `init --no-claim` issues no claim.
+- `claim` without `--email` issues (or with `--reissue`, replaces) the open
+  link, stored under `*` in the state file.
+
+### Changed
+
+- The state file keeps a pending claim's link, so rerunning `init` prints the
+  same link (and sends nothing), reports who claimed the inbox once it is
+  accepted, or issues a fresh link once the old one expired. The link is
+  dropped once the claim is accepted, revoked or expired. (Reverses 0.2.0's
+  "never stored"; the file already holds the machine credential, which can
+  mint a claim at any time.)
+- The claim handoff message opens with the consequence of not claiming.
+- `claim --email ""` is refused (`INVALID_ARGUMENT`) rather than read as the
+  open link.
+- `mcp.json` pins `@skyporch/daykeeper-mcp@0.5.0`.
+
 ## 0.4.0 (2026-10-10)
 
 Runtime SDK: `@skyporch/daykeeper@0.3.0`; management contract tag `v1.3.0`.

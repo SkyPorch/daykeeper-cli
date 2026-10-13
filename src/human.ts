@@ -38,15 +38,18 @@ export function renderInitText(envelope: Record<string, any>): string {
     data.resumed
       ? "Your Daykeeper inbox is ready. This run resumed an earlier one."
       : "Your Daykeeper inbox is ready.",
-    "",
-    ...rows.map(([label, value]) => `  ${label.padEnd(width)}  ${value}`),
   ];
+  // The handoff comes first: it is the one thing a person has to act on.
   const owner = data.ownerClaim;
   if (owner?.handoff) {
-    lines.push("", "Owner claim");
+    lines.push("", owner.owner ? "Owner" : "Owner claim");
     if (owner.claimUrl) lines.push(`  ${owner.claimUrl}`);
     lines.push(...handoffLines(owner.handoff.message, "  "));
   }
+  lines.push(
+    "",
+    ...rows.map(([label, value]) => `  ${label.padEnd(width)}  ${value}`),
+  );
   const steps: Record<string, any>[] = Array.isArray(data.nextSteps)
     ? data.nextSteps
     : [];

@@ -46,6 +46,10 @@ export interface CliContext {
    * `--json` is passed; every other caller gets the JSON envelope.
    */
   interactive?: boolean;
+  /** Open a URL in the person's browser (`init --connect` at a terminal). */
+  openUrl?: (url: string) => Promise<void> | void;
+  /** Progress text for a person, kept off stdout's JSON envelope (stderr). */
+  notify?: (text: string) => void;
 }
 
 /** The canonical credential variable and its deprecated alias. */
@@ -182,6 +186,9 @@ export async function runCli(
           ? await runInit({
               ...stateful,
               warn: (warning) => warnings.push(warning),
+              interactive: context.interactive === true,
+              ...(context.openUrl ? { openUrl: context.openUrl } : {}),
+              ...(context.notify ? { notify: context.notify } : {}),
               reveal: (secret) => {
                 const placeholder = `daykeeper-cli-revealed-${randomUUID()}`;
                 revealed.set(placeholder, secret);

@@ -56,7 +56,7 @@
   },
   "homepage": "https://www.mydaykeeper.com",
   "dependencies": {
-    "@skyporch/daykeeper": "0.3.0",
+    "@skyporch/daykeeper": "0.7.0",
     "zod": "4.4.3"
   },
   "devDependencies": {

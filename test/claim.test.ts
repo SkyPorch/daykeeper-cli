@@ -160,7 +160,8 @@ function fixture(options: FixtureOptions = {}): Fixture {
       const claim = {
         id: revoked.size ? REISSUED_CLAIM : CLAIM,
         organizationId: ORGANIZATION,
-        email: body!.email,
+        // An open claim (no address) reads back with a null address.
+        email: body!.email ?? null,
         role: "owner",
         state: options.claimState ?? "pending",
         expiresAt: hours(72),
@@ -297,6 +298,14 @@ async function readStateFile(directory: string) {
   ) as Record<string, any>;
 }
 
+async function writeStateFile(directory: string, state: Record<string, any>) {
+  await writeFile(
+    join(directory, "credentials.json"),
+    `${JSON.stringify(state, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+}
+
 /** An enrolled workspace with a healthy credential, as `init` would leave it. */
 async function seedState(
   directory: string,
@@ -380,31 +389,60 @@ test("a first claim issues the link once and records the intent", async () => {
   assert(state.claims[EMAIL].expiresAt);
 });
 
-test("the claim token and URL are never written to the state file", async () => {
+test("a pending claim keeps its link for reruns, and drops it once it is used", async () => {
   const directory = await home();
   const signer = await seedState(directory);
   const server = fixture({ ownerKey: signer.publicKey });
   const result = await claim({ home: directory, fixture: server });
   assert.equal(result.exitCode, 0, result.output);
+  // The link (and so its token) is kept beside the machine credential, which
+  // can mint a new claim anyway, so a rerun can hand the same link out again.
+  const state = await readStateFile(directory);
+  assert.equal(state.claims[EMAIL].claimUrl, result.envelope.data.claimUrl);
+  // The bare token is never stored on its own, and the machine credential is
+  // still redacted from output, unlike the claim URL.
   const raw = await readFile(join(directory, "credentials.json"), "utf8");
-  const token = server.claimTokens[0]!;
-  assert(!raw.includes(token), "The invitation token must never be persisted");
-  assert(!raw.includes("dk_invite_"));
-  assert(!raw.includes(CONSOLE), "The claim URL must never be persisted");
-  assert(!raw.includes("claimUrl"));
-  // The machine credential is still redacted from output, unlike the claim URL.
-  const state = JSON.parse(raw);
+  assert(!raw.includes('"token": "dk_invite_'));
   assert(!result.output.includes(state.credential.token));
   assert(!result.output.includes(state.owner.privateJwk.d));
+
+  // Once the server reports the claim accepted, the link is gone from disk.
+  const status = await claim({
+    home: directory,
+    fixture: fixture({ ownerKey: signer.publicKey }),
+    args: ["status"],
+  });
+  assert.equal(status.exitCode, 0, status.output);
+  const after = await readStateFile(directory);
+  assert.equal(after.claims[EMAIL].state, "accepted");
+  assert.equal(after.claims[EMAIL].claimUrl, null);
+  assert(
+    !(await readFile(join(directory, "credentials.json"), "utf8")).includes(
+      "dk_invite_",
+    ),
+  );
 });
 
-test("a replayed claim returns the pending claim with no URL", async () => {
+test("a replayed claim hands out its kept link, or says how to get one", async () => {
   const directory = await home();
   const signer = await seedState(directory);
   const first = fixture({ ownerKey: signer.publicKey });
-  await claim({ home: directory, fixture: first });
+  const issued = await claim({ home: directory, fixture: first });
   const stored = await readStateFile(directory);
 
+  // The replay is of the very claim whose link this file kept.
+  const kept = await claim({
+    home: directory,
+    fixture: fixture({ ownerKey: signer.publicKey, replay: true }),
+  });
+  assert.equal(kept.exitCode, 0, kept.output);
+  assert.equal(kept.envelope.data.replayed, true);
+  assert.equal(kept.envelope.data.claimUrl, issued.envelope.data.claimUrl);
+  assert.deepEqual(kept.envelope.data.nextActions, []);
+
+  // Without a kept link (a state file from 0.4.0) there is nothing to show.
+  delete stored.claims[EMAIL].claimUrl;
+  await writeStateFile(directory, stored);
   const server = fixture({ ownerKey: signer.publicKey, replay: true });
   const result = await claim({ home: directory, fixture: server });
   assert.equal(result.exitCode, 0, result.output);
@@ -652,11 +690,9 @@ test("an address is normalized and bounded before anything is sent", async () =>
       args: ["--email", value],
     });
     assert.equal(result.exitCode, 1, value);
-    assert.equal(
-      result.envelope.error.code,
-      value === "" ? "MISSING_ARGUMENT" : "INVALID_ARGUMENT",
-      value,
-    );
+    // An empty --email is a malformed address, never a request for the open
+    // claim (which is --email left out altogether).
+    assert.equal(result.envelope.error.code, "INVALID_ARGUMENT", value);
     assert.equal(server.requests.length, 0);
   }
   const server = fixture({ ownerKey: signer.publicKey });
@@ -716,9 +752,10 @@ test("claim's help contract lists every option it accepts", async () => {
   assert.equal(exitCode, 0);
   const entry = JSON.parse(lines[0]!).data.commands[0];
   assert.equal(entry.name, "claim");
-  assert.deepEqual(entry.required, ["email"]);
+  // No --email issues the open claim link, so the address is optional.
+  assert.deepEqual(entry.required, []);
   assert.deepEqual(entry.scopes, ["daykeeper.accounts:write"]);
-  for (const flag of ["reissue", "home", "json", "origin", "base-url"])
+  for (const flag of ["email", "reissue", "home", "json", "origin", "base-url"])
     assert(entry.optional.includes(flag), flag);
 });
 
@@ -763,9 +800,14 @@ test("a claim says who the link is for, when it expires and how to replace it", 
     data.handoff.reissueCommand,
     `npx @skyporch/daykeeper-cli claim --email ${EMAIL} --reissue --origin ${ORIGIN} --home ${JSON.stringify(directory)}`,
   );
+  // It opens with what happens until somebody claims the inbox.
   assert.match(
     data.handoff.message,
-    new RegExp(`^Send this link to ${EMAIL}\\.`),
+    /^Your Daykeeper inbox "Acme Support" is live\. Until someone claims it, customer messages reach only your AI agent and nobody is emailed about them\./,
+  );
+  assert.match(
+    data.handoff.message,
+    new RegExp(`Send this link to ${EMAIL}\\.`),
   );
   assert.match(
     data.handoff.message,
@@ -785,10 +827,13 @@ test("a claim says who the link is for, when it expires and how to replace it", 
   assert.equal(emailed.envelope.data.emailed, true);
   assert.match(
     emailed.envelope.data.handoff.message,
-    new RegExp(`^Daykeeper emailed this link to ${EMAIL}\\.`),
+    new RegExp(`is live\\. .* Daykeeper emailed this link to ${EMAIL}\\.`),
   );
 
-  // A replay explains why there is no link, and how to get one.
+  // A replay with no kept link explains why there is none, and how to get one.
+  const stored = await readStateFile(directory);
+  delete stored.claims[EMAIL].claimUrl;
+  await writeStateFile(directory, stored);
   const replay = await claim({
     home: directory,
     fixture: fixture({ ownerKey: signer.publicKey, replay: true }),
@@ -825,7 +870,7 @@ test("claim prints readable text for a person at a terminal", async () => {
       `^Claim link for ${EMAIL}\n\n  ${CONSOLE}/claim#token=dk_invite_`,
     ),
   );
-  assert.match(text, /Send this link to/);
+  assert.match(text, /Send this\s+link to/);
   assert.match(text, /--reissue/);
 
   const refused = await runCli(
@@ -893,4 +938,61 @@ test("claim refusals say what to do in words, keeping the API code and status", 
     for (const action of nextActions)
       assert(error.nextActions.includes(action), `${code}: ${action}`);
   }
+});
+
+test("without --email, claim issues the workspace's open link and keeps it under *", async () => {
+  const directory = await home();
+  const signer = await seedState(directory);
+  const server = fixture({ ownerKey: signer.publicKey });
+  const result = await claim({ home: directory, fixture: server, args: [] });
+  assert.equal(result.exitCode, 0, result.output);
+  assert.deepEqual(server.sent("POST", "/v1/workspace-claims")[0]!.body, {});
+  const data = result.envelope.data;
+  assert.equal(data.open, true);
+  assert.equal(data.claim.email, null);
+  assert.equal(data.handoff.sendTo, null);
+  assert.match(
+    data.handoff.message,
+    /customer messages reach only your AI agent/,
+  );
+  assert.match(
+    data.handoff.message,
+    new RegExp(`open this link and sign in: ${CONSOLE}/claim#token=dk_invite_`),
+  );
+  assert.match(data.handoff.message, /works once, for whoever opens it first/);
+  assert.equal(
+    data.handoff.reissueCommand,
+    `npx @skyporch/daykeeper-cli claim --reissue --origin ${ORIGIN} --home ${JSON.stringify(directory)}`,
+  );
+  const state = await readStateFile(directory);
+  assert.deepEqual(Object.keys(state.claims), ["*"]);
+  assert.equal(state.claims["*"].email, null);
+  assert.equal(state.claims["*"].claimUrl, data.claimUrl);
+
+  // --reissue revokes it and prints a fresh one.
+  const again = fixture({ ownerKey: signer.publicKey });
+  const reissued = await claim({
+    home: directory,
+    fixture: again,
+    args: ["--reissue"],
+  });
+  assert.equal(reissued.exitCode, 0, reissued.output);
+  assert.equal(
+    again.sent("POST", `/v1/workspace-claims/${CLAIM}/revoke`).length,
+    1,
+  );
+  assert.notEqual(reissued.envelope.data.claimUrl, data.claimUrl);
+});
+
+test("an empty --email is refused rather than read as an open claim", async () => {
+  const directory = await home();
+  const signer = await seedState(directory);
+  const server = fixture({ ownerKey: signer.publicKey });
+  const result = await claim({
+    home: directory,
+    fixture: server,
+    args: ["--email", ""],
+  });
+  assert.equal(result.exitCode, 1);
+  assert.equal(server.requests.length, 0);
 });

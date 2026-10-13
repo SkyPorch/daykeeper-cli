@@ -12,26 +12,26 @@ other network command calls exactly one SDK method, under the credential
 described in [Authentication](#authentication). Scope names below are required
 by the API, not permissions granted by a CLI option.
 
-| Command                  | Required flags                                                               | Optional flags | API scope                      | Effect                                        |
-| ------------------------ | ---------------------------------------------------------------------------- | -------------- | ------------------------------ | --------------------------------------------- |
-| `capabilities`           | —                                                                            | —              | `daykeeper.accounts:read`      | Read server capabilities                      |
-| `tenants list`           | —                                                                            | —              | `daykeeper.accounts:read`      | Read visible tenants                          |
-| `tenants get`            | `--tenant-id`                                                                | —              | `daykeeper.accounts:read`      | Read one tenant                               |
-| `tenants plan`           | `--input`                                                                    | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
-| `tenants apply`          | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —              | `daykeeper.provisioning:apply` | Apply the exact tenant plan                   |
-| `email-channels get`     | `--tenant-id`                                                                | —              | `daykeeper.accounts:read`      | Read channel and DNS status                   |
-| `email-channels plan`    | `--tenant-id`, `--input`                                                     | —              | `daykeeper.accounts:write`     | Create an expiring plan                       |
-| `email-channels apply`   | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —              | `daykeeper.provisioning:apply` | Apply the exact channel plan                  |
-| `operations get`         | `--operation-id`                                                             | —              | `daykeeper.provisioning:read`  | Read operation state                          |
-| `operations retry`       | `--operation-id`                                                             | —              | `daykeeper.provisioning:apply` | Request one retry explicitly                  |
-| `flows list`             | —                                                                            | `--tenant-id`  | `daykeeper.flows:read`         | Read visible flows                            |
-| `flows get`              | `--flow-id`                                                                  | —              | `daykeeper.flows:read`         | Read flow and latest version                  |
-| `flows create`           | `--tenant-id`, `--input`, `--idempotency-key`                                | —              | `daykeeper.flows:write`        | Create a draft, not a publication             |
-| `flows versions get`     | `--flow-id`, `--version`                                                     | —              | `daykeeper.flows:read`         | Read exact immutable revision                 |
-| `flows versions create`  | `--flow-id`, `--input`, `--idempotency-key`                                  | —              | `daykeeper.flows:write`        | Create a revision with optimistic concurrency |
-| `flows versions publish` | `--flow-id`, `--version`, `--expected-resource-version`, `--idempotency-key` | —              | `daykeeper.flows:publish`      | Publish an existing revision                  |
-| `claim`                  | `--email`                                                                    | `--reissue`    | `daykeeper.accounts:write`     | Issue one owner claim link                    |
-| `claim status`           | —                                                                            | —              | `daykeeper.accounts:read`      | List claims and reconcile stored records      |
+| Command                  | Required flags                                                               | Optional flags         | API scope                      | Effect                                        |
+| ------------------------ | ---------------------------------------------------------------------------- | ---------------------- | ------------------------------ | --------------------------------------------- |
+| `capabilities`           | —                                                                            | —                      | `daykeeper.accounts:read`      | Read server capabilities                      |
+| `tenants list`           | —                                                                            | —                      | `daykeeper.accounts:read`      | Read visible tenants                          |
+| `tenants get`            | `--tenant-id`                                                                | —                      | `daykeeper.accounts:read`      | Read one tenant                               |
+| `tenants plan`           | `--input`                                                                    | —                      | `daykeeper.accounts:write`     | Create an expiring plan                       |
+| `tenants apply`          | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —                      | `daykeeper.provisioning:apply` | Apply the exact tenant plan                   |
+| `email-channels get`     | `--tenant-id`                                                                | —                      | `daykeeper.accounts:read`      | Read channel and DNS status                   |
+| `email-channels plan`    | `--tenant-id`, `--input`                                                     | —                      | `daykeeper.accounts:write`     | Create an expiring plan                       |
+| `email-channels apply`   | `--plan-id`, `--plan-version`, `--idempotency-key`                           | —                      | `daykeeper.provisioning:apply` | Apply the exact channel plan                  |
+| `operations get`         | `--operation-id`                                                             | —                      | `daykeeper.provisioning:read`  | Read operation state                          |
+| `operations retry`       | `--operation-id`                                                             | —                      | `daykeeper.provisioning:apply` | Request one retry explicitly                  |
+| `flows list`             | —                                                                            | `--tenant-id`          | `daykeeper.flows:read`         | Read visible flows                            |
+| `flows get`              | `--flow-id`                                                                  | —                      | `daykeeper.flows:read`         | Read flow and latest version                  |
+| `flows create`           | `--tenant-id`, `--input`, `--idempotency-key`                                | —                      | `daykeeper.flows:write`        | Create a draft, not a publication             |
+| `flows versions get`     | `--flow-id`, `--version`                                                     | —                      | `daykeeper.flows:read`         | Read exact immutable revision                 |
+| `flows versions create`  | `--flow-id`, `--input`, `--idempotency-key`                                  | —                      | `daykeeper.flows:write`        | Create a revision with optimistic concurrency |
+| `flows versions publish` | `--flow-id`, `--version`, `--expected-resource-version`, `--idempotency-key` | —                      | `daykeeper.flows:publish`      | Publish an existing revision                  |
+| `claim`                  | —                                                                            | `--email`, `--reissue` | `daykeeper.accounts:write`     | Issue one owner claim link                    |
+| `claim status`           | —                                                                            | —                      | `daykeeper.accounts:read`      | List claims and reconcile stored records      |
 
 Identifiers must be UUIDs. Version flags must be positive safe integers.
 Idempotency keys must contain 16–128 ASCII letters, digits, periods, underscores,
@@ -108,6 +108,9 @@ daykeeper init --name "Acme Support" --plan free --json
 | `--wait-ms <n>`                                   | no       | Budget for provisioning polling and rate-limit sleeps, 10000–900000. Default 300000.                    |
 | `--reveal-key`                                    | no       | Print the literal credential in the JSON output. Off by default.                                        |
 | `--owner-email <address>`                         | no       | Once the inbox is live, issue the owner claim for this person in the same run (see `claim`).            |
+| `--no-claim`                                      | no       | Issue no claim. Without it (and without `--owner-email`), `init` issues an open claim link.             |
+| `--connect`                                       | no       | Print the claim link on stderr, open it at a terminal, and wait for a person to accept it.              |
+| `--connect-wait-ms <n>`                           | no       | How long `--connect` waits, 10000–900000. Default 180000. Only with `--connect`.                        |
 | `--json`                                          | no       | Print the JSON envelope even when stdout is a terminal.                                                 |
 
 `--timeout-ms` applies per request; `--wait-ms` bounds provisioning polling and
@@ -192,15 +195,24 @@ prints this envelope's `data`:
   "workspaceId": "…",
   "inboxId": "…",
   "consoleUrl": "https://app.mydaykeeper.com",
+  "handoff": {
+    "sendTo": null,
+    "expiresAt": "…",
+    "reissueCommand": "npx @skyporch/daykeeper-cli claim --reissue",
+    "message": "Your Daykeeper inbox \"Acme Support\" is live. Until someone claims it, customer messages reach only your AI agent and nobody is emailed about them. To own it, open this link and sign in: https://app.mydaykeeper.com/claim#token=dk_invite_… The link works once, for whoever opens it first, and expires in 72 hours (on …). If it is lost or expires, run: npx @skyporch/daykeeper-cli claim --reissue"
+  },
+  "ownerClaim": {
+    "…": "the claim output below, plus open and, with --connect, connected"
+  },
   "nextSteps": [
     {
-      "action": "claim_workspace",
-      "description": "Get the work email of the person this workspace is for, then give them owner access. The command prints a link to send them.",
-      "command": "npx @skyporch/daykeeper-cli claim --email you@company.com"
+      "action": "send_claim_link",
+      "description": "Give your person this link. Whoever opens it and signs in owns the inbox; until then customer messages reach only you.",
+      "url": "https://app.mydaykeeper.com/claim#token=dk_invite_…"
     },
     {
       "action": "open_console",
-      "description": "The person you claimed it for signs in here with that email address to open the inbox.",
+      "description": "After claiming, your person signs in here to open the inbox.",
       "url": "https://app.mydaykeeper.com"
     },
     {
@@ -295,23 +307,26 @@ and carries `nextActions: ["run_init_again"]` whenever a rerun can resume.
 ## `claim`
 
 `claim` hands the workspace `init` created to a person. It issues an owner
-invitation for one address and prints the link that accepts it. The person signs
-in the way the console already signs people in and lands in the inbox as an
-owner; the machine owner keeps its credential and keeps working.
+invitation and prints the link that accepts it: for one address with
+`--email`, or without it an open link that whoever opens it first may accept
+(contract 1.10.0). The person signs in the way the console already signs people
+in and lands in the inbox as an owner; the machine owner keeps its credential
+and keeps working.
 
 ```sh
+daykeeper claim
 daykeeper claim --email gabriel@acme.example
 daykeeper claim status
 ```
 
-| Flag                                              | Required | Meaning                                                                                                |
-| ------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
-| `--email <address>`                               | yes      | The address that may accept the claim, at most 254 characters. Lowercased before it is sent or stored. |
-| `--reissue`                                       | no       | Revoke the pending claim for that address, then issue a new one under a fresh key.                     |
-| `--origin <https url>`                            | no       | As for `init`, and pinned the same way. Env `DAYKEEPER_ORIGIN`.                                        |
-| `--onboarding-url`, `--base-url`, `--gateway-url` | no       | Per-service overrides, as for `init`.                                                                  |
-| `--home <dir>`                                    | no       | Where `init` stored its state. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`.                |
-| `--json`                                          | no       | Keep the JSON envelope at a terminal. Without it, a terminal gets readable text.                       |
+| Flag                                              | Required | Meaning                                                                                                                           |
+| ------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `--email <address>`                               | no       | The address that may accept the claim, at most 254 characters. Lowercased before it is sent or stored. Without it, the open link. |
+| `--reissue`                                       | no       | Revoke the pending claim for that address (or the open link), then issue a new one under a fresh key.                             |
+| `--origin <https url>`                            | no       | As for `init`, and pinned the same way. Env `DAYKEEPER_ORIGIN`.                                                                   |
+| `--onboarding-url`, `--base-url`, `--gateway-url` | no       | Per-service overrides, as for `init`.                                                                                             |
+| `--home <dir>`                                    | no       | Where `init` stored its state. Env `DAYKEEPER_HOME`, then `$XDG_CONFIG_HOME/daykeeper`.                                           |
+| `--json`                                          | no       | Keep the JSON envelope at a terminal. Without it, a terminal gets readable text.                                                  |
 
 `claim` reads the state file `init` wrote and runs under the credential stored
 there. Like `init`, it refuses `--token-stdin`, and a `DAYKEEPER_API_KEY` or
@@ -334,17 +349,21 @@ unredacted, once, because it is the handoff: unless the server reports
 `emailed: true` (an installation that emails claim links), the agent is the only
 party that can give it to a person. It is therefore **not**
 added to the redaction list, unlike the machine credential and the owner private
-key, which stay redacted. The state file records the claim id, address, expiry,
-and idempotency key, and **never** the token or the URL. Treat the printed link
-the way you would treat a password reset link.
+key, which stay redacted. The state file records the claim id, address, expiry
+and idempotency key, and, while the claim is pending, its URL (since 0.5.0), so
+a rerun can print the same link again. That file already holds the machine
+credential, which can mint a new claim at any time, so the link adds no
+authority; it is dropped once the claim is accepted, revoked or expired. Treat
+the printed link the way you would treat a password reset link.
 
 ### Intent and replay
 
-The idempotency key is generated once per lowercased address and stored under
-`claims` in the state file before the mutation is sent, so an interrupted run
-replays that key instead of issuing a second claim. Rerunning the same intent
-returns the pending claim with `token` and `claimUrl` as `null`, `replayed:
-true`, and `nextActions: ["reissue_claim"]`: the link cannot be shown twice.
+The idempotency key is generated once per lowercased address (or `*` for the
+open link) and stored under `claims` in the state file before the mutation is
+sent, so an interrupted run replays that key instead of issuing a second claim.
+Rerunning the same intent returns the pending claim with `replayed: true` and
+the link the state file kept; when no link was kept (a state file from 0.4.0),
+`claimUrl` is `null` and `nextActions` is `["reissue_claim"]`.
 `--reissue` revokes the pending claim first and then creates under a fresh key,
 because the retired key would otherwise replay the revoked claim.
 
@@ -375,7 +394,7 @@ rerun replays the interrupted intent. `claim status` sends no mutation.
     "sendTo": "gabriel@acme.example",
     "expiresAt": "…",
     "reissueCommand": "npx @skyporch/daykeeper-cli claim --email gabriel@acme.example --reissue",
-    "message": "Send this link to gabriel@acme.example. It works once, only for someone signed in as gabriel@acme.example, and expires in 72 hours (on …). They sign in to Daykeeper with that address and become an owner of this workspace; the agent credential keeps working. If the link is lost or expires, run: …"
+    "message": "Your Daykeeper inbox \"Acme Support\" is live. Until someone claims it, customer messages reach only your AI agent and nobody is emailed about them. Send this link to gabriel@acme.example. It works once, only for someone signed in as gabriel@acme.example, and expires in 72 hours (on …). They sign in to Daykeeper with that address and become an owner of this workspace; the agent credential keeps working. If the link is lost or expires, run: …"
   },
   "credentialRotated": false
 }
@@ -386,11 +405,15 @@ server that sends no claim emails omits it and the CLI reports `false`.
 `handoff.message` is written to be relayed to a person as is. At a terminal
 without `--json`, `claim` prints the link and that message as text.
 
-`init --owner-email <address>` issues the same claim right after the inbox is
-live and reports it as `data.ownerClaim` (the fields above plus `handoff`). A
-claim that cannot be issued never fails `init`: `ownerClaim` is
-`{ "email", "issued": false, "code" }`, a `OWNER_CLAIM_NOT_ISSUED` warning names
-the `claim` command to run, and the `claim_workspace` next step stays.
+`init` issues the same claim right after the inbox is live (for
+`--owner-email`, or the open link) and reports it as `data.ownerClaim` (the
+fields above plus `open`, `handoff`, `owner` once accepted and, with
+`--connect`, `connected`), with the same `handoff` at `data.handoff`. A claim
+that cannot be issued never fails `init`: `ownerClaim` is
+`{ "email", "open", "issued": false, "code" }`, a `OWNER_CLAIM_NOT_ISSUED`
+warning names the `claim` command to run, and the `claim_workspace` next step
+stays. `--connect` that times out is a successful run with an
+`OWNER_NOT_CONNECTED` warning; the link keeps working until it expires.
 
 `claim status` returns `{ "claims": [claim…], "reconciled": { "updated": 0,
 "forgotten": 0 }, "credentialRotated": false }`.

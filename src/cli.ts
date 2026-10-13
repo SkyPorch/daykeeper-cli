@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { ENVELOPE_VERSION, runCli } from "./index.ts";
 
 const controller = new AbortController();
@@ -28,6 +29,10 @@ async function main() {
       },
       signal: controller.signal,
       interactive: process.stdout.isTTY === true,
+      notify: (text) => {
+        process.stderr.write(text);
+      },
+      openUrl,
     });
     process.exitCode = controller.signal.aborted ? cancelledExitCode : result;
   } finally {
@@ -55,3 +60,28 @@ void main().catch(() => {
   );
   process.exitCode = 1;
 });
+
+/**
+ * Open a claim link in the person's default browser. The URL is passed as one
+ * argument, never through a shell, and a browser that does not open is not an
+ * error: the link is printed either way.
+ */
+function openUrl(url: string): Promise<void> {
+  if (!/^https?:\/\//.test(url)) return Promise.resolve();
+  const [command, args] =
+    process.platform === "darwin"
+      ? ["open", [url]]
+      : process.platform === "win32"
+        ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+        : ["xdg-open", [url]];
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(command, args, { stdio: "ignore", detached: true });
+      child.on("error", () => resolve());
+      child.unref();
+      resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
