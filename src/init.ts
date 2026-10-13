@@ -663,7 +663,9 @@ async function execute(
     const record = state.claims?.[key];
     let reissue = false;
     if (record?.id) {
-      const { items } = await request(() => client.workspaceClaims.list());
+      const { items } = await request(() =>
+        client.workspaceClaims.list({ includeOpen: true }),
+      );
       const live = items.find((claim) => claim.id === record.id);
       if (!live || live.state === "revoked") {
         delete state.claims![key];
@@ -728,7 +730,9 @@ async function execute(
         Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - clock.now())),
         signal,
       );
-      const { items } = await request(() => client.workspaceClaims.list());
+      const { items } = await request(() =>
+        client.workspaceClaims.list({ includeOpen: true }),
+      );
       const live = items.find((claim) => claim.id === issued.claim.id);
       if (live?.state === "accepted") {
         const key = issued.open ? OPEN_CLAIM_KEY : live.email!;

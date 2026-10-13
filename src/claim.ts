@@ -336,7 +336,9 @@ async function status(
   attempts: Retries,
   rotated: boolean,
 ): Promise<Record<string, unknown>> {
-  const { items } = await attempts.request(() => client.workspaceClaims.list());
+  const { items } = await attempts.request(() =>
+    client.workspaceClaims.list({ includeOpen: true }),
+  );
   const byId = new Map(items.map((claim) => [claim.id, claim]));
   const claims = state.claims ?? {};
   let updated = 0;

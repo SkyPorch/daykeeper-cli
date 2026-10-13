@@ -412,6 +412,11 @@ function fixture(options: FixtureOptions = {}): Fixture {
     }
 
     if (key === "GET /v1/workspace-claims") {
+      assert.equal(
+        url.search,
+        "?include=open",
+        "claims are listed with open ones",
+      );
       lists += 1;
       if (options.acceptOnList !== undefined && lists >= options.acceptOnList)
         for (const claim of claims)

@@ -192,6 +192,11 @@ function fixture(options: FixtureOptions = {}): Fixture {
     }
 
     if (key === "GET /v1/workspace-claims") {
+      assert.equal(
+        url.search,
+        "?include=open",
+        "claims are listed with open ones",
+      );
       return Response.json({
         data: {
           items: options.items ?? [
