@@ -45,7 +45,7 @@ jobs:
         # on main pushes and manual runs.
         node: ${{ github.event_name == 'pull_request' && fromJSON('[22]') || fromJSON('[20, 22, 24]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with:
           version: 10.8.0
