@@ -2,9 +2,9 @@
 
 ## Unreleased (0.5.0)
 
-Runtime SDK: `@skyporch/daykeeper@0.7.0`; management contract tag `v1.10.0`.
+Runtime SDK: `@skyporch/daykeeper@0.7.0`; management contract tag `v1.12.0`.
 MCP config: `@skyporch/daykeeper-mcp@0.5.0`. Needs a server with migration
-0119 (`SkyPorch/daykeeper`, open workspace claims).
+0122 (`SkyPorch/daykeeper`, open workspace claims).
 
 ### Added
 
@@ -20,6 +20,13 @@ MCP config: `@skyporch/daykeeper-mcp@0.5.0`. Needs a server with migration
   terminal, and waits (`--connect-wait-ms`, default 180000) for a person to
   accept it, then reports `connected` and `owner`. A timeout is a successful
   run with an `OWNER_NOT_CONNECTED` warning.
+- If the link stops working while `init --connect` waits, the run says why:
+  an expired link is replaced in the same run (`OWNER_CLAIM_RENEWED`); a link
+  somebody revoked is not reissued behind their back, and the handoff names
+  the reissue command instead (`OWNER_CLAIM_REVOKED`).
+- An open claim the server issued but the state file never saved (the run
+  stopped in between) is revoked and replaced in the next run, instead of
+  replaying a claim whose link nobody holds.
 - `init --no-claim` issues no claim.
 - `claim` without `--email` issues (or with `--reissue`, replaces) the open
   link, stored under `*` in the state file.

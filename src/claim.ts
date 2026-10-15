@@ -207,6 +207,18 @@ export async function issueClaim(
   };
   await save();
 
+  // An open claim's link exists only in the response that created it. When a
+  // replay finds the claim pending but this file never kept its link (the
+  // first run stopped after the server issued it and before it was saved),
+  // nobody can ever open it: replace it now, in this run, rather than end
+  // with no way for a person to own the inbox. An addressed claim is left
+  // alone; its person may have the link by email.
+  if (input.email === null && pending && claimUrl === null && !input.reissue)
+    return issueClaim(client, state, save, attempts, {
+      email: null,
+      reissue: true,
+    });
+
   // `emailed` is additive in the platform's response (servers that do not
   // send claim emails omit it), so anything but `true` reads as not emailed.
   const emailed = (result as unknown as { emailed?: unknown }).emailed === true;
@@ -280,6 +292,14 @@ export function claimHandoff(
       `It works once, only for someone signed in as ${email}, and expires ${expiry}.`,
       `They sign in to Daykeeper with that address and become an owner of this workspace; the agent credential keeps working.`,
       `If the link is lost or expires, run: ${reissueCommand}`,
+    ].join(" ");
+  } else if (issued.claim.state === "revoked") {
+    message = [
+      consequence,
+      email === null
+        ? `Its claim link was revoked, so it no longer works.`
+        : `The claim for ${email} was revoked, so its link no longer works.`,
+      `To issue a new one, run: ${reissueCommand}`,
     ].join(" ");
   } else {
     message = [

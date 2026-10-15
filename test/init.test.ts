@@ -79,6 +79,11 @@ interface FixtureOptions {
    */
   acceptOnList?: number;
   acceptedBy?: string;
+  /**
+   * On this numbered `GET /v1/workspace-claims`, every pending claim expires
+   * (the list then hides it) or is revoked by somebody else.
+   */
+  invalidateOnList?: { list: number; as: "expired" | "revoked" };
 }
 
 interface Fixture {
@@ -425,8 +430,20 @@ function fixture(options: FixtureOptions = {}): Fixture {
             claim.email ??= options.acceptedBy ?? "sam@acme.example";
             claim.acceptedAt = new Date().toISOString();
           }
+      if (options.invalidateOnList && lists >= options.invalidateOnList.list)
+        for (const claim of claims)
+          if (claim.state === "pending") {
+            claim.state = options.invalidateOnList.as;
+            if (claim.state === "revoked")
+              claim.revokedAt = new Date().toISOString();
+          }
       return Response.json({
-        data: { items: [...claims].reverse().map(publicClaim) },
+        data: {
+          items: [...claims]
+            .reverse()
+            .filter((claim) => claim.state !== "expired")
+            .map(publicClaim),
+        },
       });
     }
 
@@ -2215,4 +2232,100 @@ test("--connect shows the link, opens it at a terminal and waits for its owner",
   assert.equal(slow.length, 0);
   // About one list every three seconds across the ten-second wait.
   assert(waiting.sent("GET", "/v1/workspace-claims").length <= 5);
+});
+
+test("--connect replaces a link that expires while waiting, never one revoked", async () => {
+  const connect = (directory: string) => [
+    "init",
+    "--name",
+    "Acme Support",
+    "--origin",
+    ORIGIN,
+    "--home",
+    directory,
+    "--connect",
+    "--connect-wait-ms",
+    "10000",
+  ];
+  const isWarning = (envelope: any, code: string) =>
+    envelope.warnings.some(
+      (warning: { code: string }) => warning.code === code,
+    );
+
+  // Expired (a resumed claim near its end): a new link is the handoff.
+  const expiring = fixture({ invalidateOnList: { list: 1, as: "expired" } });
+  const expiredHome = await home();
+  const renewed = await run(connect(expiredHome), expiring, {}, {});
+  assert.equal(renewed.exitCode, 0, renewed.output);
+  const renewedEnvelope = JSON.parse(renewed.output);
+  const issued = expiring.sent("POST", "/v1/workspace-claims");
+  assert.equal(issued.length, 2);
+  assert.equal(renewedEnvelope.data.ownerClaim.connected, false);
+  assert.equal(
+    renewedEnvelope.data.ownerClaim.claim.id,
+    expiring.claims[1]!.id,
+  );
+  assert.match(renewedEnvelope.data.ownerClaim.claimUrl, /#token=dk_invite_2/);
+  assert(isWarning(renewedEnvelope, "OWNER_CLAIM_RENEWED"));
+  assert(!isWarning(renewedEnvelope, "OWNER_NOT_CONNECTED"));
+  const kept = await readStateFile(expiredHome);
+  assert.equal(kept.claims["*"].id, expiring.claims[1]!.id);
+  assert.equal(
+    kept.claims["*"].claimUrl,
+    renewedEnvelope.data.ownerClaim.claimUrl,
+  );
+
+  // Revoked by somebody: no new link behind their back, and not the dead one.
+  const revoking = fixture({ invalidateOnList: { list: 1, as: "revoked" } });
+  const revokedHome = await home();
+  const withdrawn = await run(connect(revokedHome), revoking, {}, {});
+  assert.equal(withdrawn.exitCode, 0, withdrawn.output);
+  const withdrawnEnvelope = JSON.parse(withdrawn.output);
+  assert.equal(revoking.sent("POST", "/v1/workspace-claims").length, 1);
+  assert.equal(withdrawnEnvelope.data.ownerClaim.claimUrl, null);
+  assert.deepEqual(withdrawnEnvelope.data.ownerClaim.nextActions, [
+    "reissue_claim",
+  ]);
+  assert(isWarning(withdrawnEnvelope, "OWNER_CLAIM_REVOKED"));
+  assert.match(
+    withdrawnEnvelope.data.handoff.message,
+    /claim link was revoked, so it no longer works\. To issue a new one, run: .*claim --reissue/,
+  );
+  assert(!withdrawn.output.includes("dk_invite_1"));
+  const dead = await readStateFile(revokedHome);
+  assert.equal(dead.claims["*"].state, "revoked");
+  assert.equal(dead.claims["*"].claimUrl, null);
+});
+
+test("an open claim the server issued but this file never saved is replaced in the same run", async () => {
+  const directory = await home();
+  const first = fixture();
+  await init({ home: directory, fixture: first });
+  // The first run stopped after the server issued the link and before its
+  // answer was saved: only the intent (the idempotency key) is on disk.
+  const saved = await readStateFile(directory);
+  saved.claims["*"] = {
+    ...saved.claims["*"],
+    id: null,
+    state: null,
+    expiresAt: null,
+    claimUrl: null,
+  };
+  await writeFile(
+    join(directory, "credentials.json"),
+    JSON.stringify(saved, null, 2),
+    { mode: 0o600 },
+  );
+
+  const resumed = fixture({ trafficEnabled: [true], claims: first.claims });
+  const result = await init({ home: directory, fixture: resumed });
+  assert.equal(result.exitCode, 0, result.output);
+  // The replay found the unreachable claim; it was revoked and replaced.
+  assert.equal(resumed.sent("POST", "/v1/workspace-claims").length, 2);
+  assert.equal(first.claims[0]!.state, "revoked");
+  const link = result.envelope.data.ownerClaim.claimUrl;
+  assert.match(link, /#token=dk_invite_2/);
+  const state = await readStateFile(directory);
+  assert.equal(state.claims["*"].claimUrl, link);
+  assert.equal(state.claims["*"].id, first.claims[1]!.id);
 });

@@ -521,10 +521,36 @@ async function execute(
       let issued = await currentClaim(claimEmail);
       let connected: boolean | undefined;
       if (args.connect && issued.claimUrl && !issued.owner) {
-        const accepted = await waitForOwner(issued);
-        connected = accepted !== null;
-        if (accepted) issued = accepted;
-        else
+        const waited = await waitForOwner(issued);
+        connected = waited.status === "accepted";
+        if (waited.status === "accepted") issued = waited.claim;
+        else if (waited.status === "expired") {
+          // The link ran out while we waited (a resumed claim near its
+          // expiry). Hand over a new one rather than a dead one.
+          issued = await renewExpired(claimEmail);
+          context.warn?.({
+            code: "OWNER_CLAIM_RENEWED",
+            message:
+              "The claim link expired while waiting, so a new one was issued. Send the new link to the person this inbox is for.",
+          });
+        } else if (waited.status === "revoked") {
+          // Somebody withdrew it on purpose: do not issue another behind
+          // their back, and never hand out the dead link.
+          issued = {
+            ...issued,
+            claim: { ...issued.claim, state: "revoked" },
+            claimUrl: null,
+            nextActions: ["reissue_claim"],
+          };
+          context.warn?.({
+            code: "OWNER_CLAIM_REVOKED",
+            message: `The claim link was revoked while waiting, so it no longer works. To issue a new one, run: ${withFollowUp(
+              claimEmail === null
+                ? `${CLI_INVOCATION} claim --reissue`
+                : `${CLI_INVOCATION} claim --email ${claimEmail} --reissue`,
+            )}`,
+          });
+        } else
           context.warn?.({
             code: "OWNER_NOT_CONNECTED",
             message: `Nobody accepted the claim within ${Math.round(args.connectWaitMs / 1000)} seconds. The link still works until it expires; send it to the person this inbox is for.`,
@@ -705,14 +731,32 @@ async function execute(
   }
 
   /**
+   * A claim that expired: forget its record (its key would only replay the
+   * dead claim) and issue a fresh one for the same address, or a fresh open
+   * link.
+   */
+  async function renewExpired(email: string | null): Promise<IssuedClaim> {
+    const key = email ?? OPEN_CLAIM_KEY;
+    if (state.claims?.[key]) {
+      delete state.claims[key];
+      await save();
+    }
+    return issueClaim(client, state, save, attempts, { email, reissue: false });
+  }
+
+  /**
    * `--connect`: show the link, open it when a person is at this terminal,
    * and wait for somebody to accept it. Polls the claim list every three
-   * seconds; no new server protocol is involved. Null on timeout, or when the
-   * claim stops being pending for any reason other than acceptance.
+   * seconds; no new server protocol is involved. Reports acceptance, a
+   * timeout (the link still works), or the link dying while we waited: it
+   * expired (the list hides expired claims) or somebody revoked it.
    */
   async function waitForOwner(
     issued: IssuedClaim,
-  ): Promise<IssuedClaim | null> {
+  ): Promise<
+    | { status: "accepted"; claim: IssuedClaim }
+    | { status: "timeout" | "expired" | "revoked" }
+  > {
     const url = issued.claimUrl!;
     context.notify?.(
       `Open this link and sign in to own the inbox (waiting up to ${Math.round(args.connectWaitMs / 1000)} seconds):\n  ${url}\n`,
@@ -744,18 +788,32 @@ async function execute(
           await save();
         }
         return {
-          ...issued,
-          claim: live,
-          claimUrl: null,
-          nextActions: [],
-          ...(live.email
-            ? { owner: { email: live.email, acceptedAt: live.acceptedAt } }
-            : {}),
+          status: "accepted",
+          claim: {
+            ...issued,
+            claim: live,
+            claimUrl: null,
+            nextActions: [],
+            ...(live.email
+              ? { owner: { email: live.email, acceptedAt: live.acceptedAt } }
+              : {}),
+          },
         };
       }
-      if (!live || live.state !== "pending") return null;
+      if (!live || live.state !== "pending") {
+        const key = issued.open ? OPEN_CLAIM_KEY : issued.claim.email!;
+        const record = state.claims?.[key];
+        const status = live?.state === "revoked" ? "revoked" : "expired";
+        if (record?.id === issued.claim.id) {
+          record.state = status;
+          record.claimUrl = null;
+          record.updatedAt = new Date().toISOString();
+          await save();
+        }
+        return { status };
+      }
     }
-    return null;
+    return { status: "timeout" };
   }
 
   function activationUnavailable() {

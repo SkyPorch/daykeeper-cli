@@ -309,7 +309,7 @@ and carries `nextActions: ["run_init_again"]` whenever a rerun can resume.
 `claim` hands the workspace `init` created to a person. It issues an owner
 invitation and prints the link that accepts it: for one address with
 `--email`, or without it an open link that whoever opens it first may accept
-(contract 1.10.0). The person signs in the way the console already signs people
+(contract 1.12.0). The person signs in the way the console already signs people
 in and lands in the inbox as an owner; the machine owner keeps its credential
 and keeps working.
 
