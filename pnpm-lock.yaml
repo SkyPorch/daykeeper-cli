@@ -22,8 +22,8 @@ importers:
         specifier: 22.20.1
         version: 22.20.1
       prettier:
-        specifier: 3.9.9
-        version: 3.9.9
+        specifier: 3.9.10
+        version: 3.9.10
       tsup:
         specifier: 8.5.1
         version: 8.5.1(tsx@4.23.15)(typescript@5.9.3)
@@ -476,8 +476,8 @@ packages:
       yaml:
         optional: true
 
-  prettier@3.9.9:
-    resolution: {integrity: sha512-Z/CJHIkdujO/OtN7nXUii0Rf3VT5SRuhjBA82Xvu2XhBUgX3nhP67T0LHceBdQLex7OOFGTox+Q5Yg8Jk2Qivg==}
+  prettier@3.9.10:
+    resolution: {integrity: sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -858,7 +858,7 @@ snapshots:
     optionalDependencies:
       tsx: 4.23.15
 
-  prettier@3.9.9: {}
+  prettier@3.9.10: {}
 
   readdirp@4.1.2: {}
 
