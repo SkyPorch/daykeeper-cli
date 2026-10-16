@@ -52,7 +52,7 @@ export async function verifyExecutable(bin) {
   assert.equal(help.exitCode, 0);
   assert.equal(help.envelope.data.commands.length, 19);
   const version = await call(bin, ["--version"]);
-  assert.equal(version.envelope.data.sdkVersion, "0.3.0");
+  assert.equal(version.envelope.data.sdkVersion, "0.7.0");
   // An empty home, so the smoke never picks up a real stored credential.
   const emptyHome = await mkdtemp(join(tmpdir(), "daykeeper-cli-smoke-empty-"));
   const missingAuth = await call(bin, ["capabilities"], {

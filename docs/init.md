@@ -217,7 +217,7 @@ Success envelope, `data` shape:
     "mcpServers": {
       "daykeeper": {
         "command": "npx",
-        "args": ["--yes", "@skyporch/daykeeper-mcp@0.3.0"],
+        "args": ["--yes", "@skyporch/daykeeper-mcp@0.5.0"],
         "env": {
           "DAYKEEPER_API_URL": "https://…",
           "DAYKEEPER_API_KEY": "<stored; see configPath>",
@@ -271,7 +271,7 @@ and the step reached in `fields`.
   `inboxActivations`, `tenants.getProvisioningOperation`, `customerSessions`,
   and `entitlements`; 0.3.0 adds `workspaceClaims`. Record it in
   `COMPATIBILITY.md`.
-- The MCP block pins the published `@skyporch/daykeeper-mcp@0.3.0` and sets
+- The MCP block pins the published `@skyporch/daykeeper-mcp@0.5.0` and sets
   `DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS=true`, so an agent using `mcp.json` can
   create, list and revoke workspace claim links. Those tools work only under
   the machine credential `init` stored, which is the key `mcp.json` carries.

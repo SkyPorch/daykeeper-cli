@@ -9,6 +9,7 @@ pull request head is never an acceptable record.
 
 | CLI version | Management contract | Customer contract | SDK dependency              | Contract tag / commit                                                                                                                  |
 | ----------- | ------------------- | ----------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.5.0       | v1.12.0             | not used          | `@skyporch/daykeeper` 0.7.0 | `v1.12.0` @ `79df95836faacdc44967d1a5a0867b725a2c2546` (SkyPorch/daykeeper-openapi, 2026-10-16)                                        |
 | 0.4.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
 | 0.3.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
 | 0.2.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |

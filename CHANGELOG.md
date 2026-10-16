@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased (0.5.0)
+## 0.5.0 - 2026-10-16
 
-Runtime SDK: `@skyporch/daykeeper@0.7.0`; management contract tag `v1.12.0`.
+Runtime SDK: `@skyporch/daykeeper@0.7.0`; management contract tag `v1.12.0`
+(`79df958`).
 MCP config: `@skyporch/daykeeper-mcp@0.5.0`. Needs a server with migration
 0122 (`SkyPorch/daykeeper`, open workspace claims).
 

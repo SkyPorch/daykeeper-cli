@@ -255,7 +255,7 @@ prints this envelope's `data`:
     "mcpServers": {
       "daykeeper": {
         "command": "npx",
-        "args": ["--yes", "@skyporch/daykeeper-mcp@0.3.0"],
+        "args": ["--yes", "@skyporch/daykeeper-mcp@0.5.0"],
         "env": {
           "DAYKEEPER_API_URL": "https://…",
           "DAYKEEPER_API_KEY": "<stored; see configPath>",
