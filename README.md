@@ -29,21 +29,35 @@ Every other command then uses the stored credential, with nothing to export:
 npx @skyporch/daykeeper-cli tenants list
 ```
 
-Hand the workspace to a person, in the same run or later:
+Every `init` ends with a way for a person to own the inbox. Until somebody
+claims it, customer messages reach only the agent and nobody is emailed about
+them, so the output leads with a `handoff` message to relay as is:
+
+- By default, an open claim link: whoever opens it first and signs in at
+  https://app.mydaykeeper.com owns the workspace.
+- With `--owner-email`, a claim only that address can accept (and that the
+  person also finds waiting when they sign in with it). Prefer it whenever you
+  know the address.
+- With `--connect`, `init` prints the link (on stderr), opens it in the
+  browser when a person is at the terminal, and waits up to 3 minutes for them
+  to accept it, then reports who owns the inbox.
+- With `--no-claim`, no claim is issued (for CI, or a workspace a person
+  already owns).
 
 ```sh
 npx @skyporch/daykeeper-cli init --name "Acme Support" --owner-email you@company.com
+npx @skyporch/daykeeper-cli init --name "Acme Support" --connect
+npx @skyporch/daykeeper-cli claim                      # the open link again, or a new one
 npx @skyporch/daykeeper-cli claim --email you@company.com
 ```
 
-`claim` issues an owner invitation for that address and prints the link that
-accepts it. Send the link to that person; they sign in at
-https://app.mydaykeeper.com and own the workspace. The link carries its token in
-the URL fragment and is printed unredacted, once, because it is the handoff —
-treat it like a password reset link. It is never written to the state file.
-The output says who to send it to, that it expires in 72 hours, and the exact
-`--reissue` command that replaces it. Rerunning returns
-the pending claim without a link; `--reissue` revokes it and issues a new one,
+The link carries its token in the URL fragment and is printed unredacted,
+because it is the handoff: treat it like a password reset link, and use
+`--no-claim` for runs whose output is shared (CI logs, public transcripts). It
+works once and expires in 72 hours. The state file keeps a pending claim's link
+beside the machine credential (which can mint a new claim anyway), so rerunning
+`init` prints the same link, or who claimed it, or a fresh link once the old
+one expired. `claim --reissue` revokes the pending link and issues a new one,
 and `claim status` lists what the server holds.
 
 Install it globally to type `daykeeper` instead of `npx @skyporch/daykeeper-cli`:

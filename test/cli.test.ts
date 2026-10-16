@@ -919,7 +919,7 @@ test("manifest pins the inspected public SDK without private or local dependenci
   );
   assert.equal(manifest.version, CLI_VERSION);
   assert.equal(manifest.dependencies["@skyporch/daykeeper"], SDK_VERSION);
-  assert.equal(SDK_VERSION, "0.3.0");
+  assert.equal(SDK_VERSION, "0.7.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(
     manifest.private,

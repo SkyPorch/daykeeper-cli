@@ -44,6 +44,9 @@ const commands: readonly Command[] = [
       "wait-ms",
       "reveal-key",
       "owner-email",
+      "no-claim",
+      "connect",
+      "connect-wait-ms",
       "json",
     ],
     // The credential this command mints carries its own fixed scopes. The
@@ -54,9 +57,10 @@ const commands: readonly Command[] = [
     name: "claim",
     effect: "mutation",
     summary:
-      "Issue an owner claim link for the workspace init created, and print it once.",
-    required: ["email"],
+      "Issue an owner claim link for the workspace init created and print it: for --email, or an open link that names nobody.",
+    required: [],
     optional: [
+      "email",
       "reissue",
       "origin",
       "onboarding-url",
@@ -243,8 +247,17 @@ const stringOptions = [
   "wait-ms",
   "email",
   "owner-email",
+  "connect-wait-ms",
 ];
-const booleanOptions = ["token-stdin", "json", "help", "reveal-key", "reissue"];
+const booleanOptions = [
+  "token-stdin",
+  "json",
+  "help",
+  "reveal-key",
+  "reissue",
+  "no-claim",
+  "connect",
+];
 
 /**
  * The commands that run under the credential `init` stored. They mint or read

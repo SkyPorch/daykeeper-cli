@@ -24,12 +24,18 @@ import {
   rotateCredential,
   type Clock,
 } from "./credential.ts";
-import { claimHandoff, followUpFlags, issueClaim } from "./claim.ts";
+import {
+  claimHandoff,
+  followUpFlags,
+  issueClaim,
+  type IssuedClaim,
+} from "./claim.ts";
 import { CliError } from "./errors.ts";
 import { emailAddress } from "./schemas.ts";
 import { assertPinnedOrigin, resolveOrigins, type Origins } from "./origins.ts";
 import {
   MCP_FILE,
+  OPEN_CLAIM_KEY,
   STATE_FILE,
   STATE_VERSION,
   STATE_WARNING,
@@ -46,6 +52,7 @@ const POLL_INTERVAL_MS = 3000;
 const DEFAULT_WAIT_MS = 300000;
 const MIN_WAIT_MS = 10000;
 const MAX_WAIT_MS = 900000;
+const DEFAULT_CONNECT_WAIT_MS = 180000;
 const MAX_SLUG_ATTEMPTS = 10;
 const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -89,6 +96,15 @@ export interface InitContext {
   reveal: (secret: string) => string;
   /** Add a non-fatal note to the printed envelope. */
   warn?: (warning: { code: string; message: string }) => void;
+  /** Whether a person is at the terminal (stdout is a TTY). */
+  interactive?: boolean;
+  /** Open a URL in the person's browser (`--connect`, at a terminal only). */
+  openUrl?: (url: string) => Promise<void> | void;
+  /**
+   * Say something while the run is still going, without touching the JSON
+   * envelope on stdout (`--connect` prints its link this way, on stderr).
+   */
+  notify?: (text: string) => void;
 }
 
 export { realClock } from "./credential.ts";
@@ -104,6 +120,11 @@ interface InitArguments extends Origins {
   revealKey: boolean;
   /** `--owner-email`: issue the owner claim for this address once the inbox is live. */
   ownerEmail: string | undefined;
+  /** `--no-claim`: issue no claim at all (CI, or a workspace a person owns). */
+  noClaim: boolean;
+  /** `--connect`: wait for a person to accept the claim before finishing. */
+  connect: boolean;
+  connectWaitMs: number;
 }
 
 export async function runInit(
@@ -481,20 +502,67 @@ async function execute(
   const withFollowUp = (command: string) =>
     followUp ? `${command} ${followUp}` : command;
 
-  // 9. Hand the workspace to its person. The inbox is already live, so a
-  // claim that cannot be issued is a note on a successful run, never a
-  // failed init: `claim --email` can always issue it later.
+  // 9. Hand the workspace to its person. Every run ends with a way for the
+  // agent's person to own the inbox: a claim for --owner-email, or otherwise
+  // an open claim link that names nobody. The inbox is already live, so a
+  // claim that cannot be issued is a note on a successful run, never a failed
+  // init: `claim` can always issue it later.
   let ownerClaim: Record<string, unknown> | undefined;
-  if (args.ownerEmail) {
+  let handoff: ReturnType<typeof claimHandoff> | undefined;
+  const claimEmail = args.ownerEmail ?? null;
+  const claimCommand = withFollowUp(
+    claimEmail === null
+      ? `${CLI_INVOCATION} claim`
+      : `${CLI_INVOCATION} claim --email ${claimEmail}`,
+  );
+  if (!args.noClaim) {
     progress.setStep("owner_claim");
     try {
-      const issued = await issueClaim(client, state, save, attempts, {
-        email: args.ownerEmail,
-        reissue: false,
+      let issued = await currentClaim(claimEmail);
+      let connected: boolean | undefined;
+      if (args.connect && issued.claimUrl && !issued.owner) {
+        const waited = await waitForOwner(issued);
+        connected = waited.status === "accepted";
+        if (waited.status === "accepted") issued = waited.claim;
+        else if (waited.status === "expired") {
+          // The link ran out while we waited (a resumed claim near its
+          // expiry). Hand over a new one rather than a dead one.
+          issued = await renewExpired(claimEmail);
+          context.warn?.({
+            code: "OWNER_CLAIM_RENEWED",
+            message:
+              "The claim link expired while waiting, so a new one was issued. Send the new link to the person this inbox is for.",
+          });
+        } else if (waited.status === "revoked") {
+          // Somebody withdrew it on purpose: do not issue another behind
+          // their back, and never hand out the dead link.
+          issued = {
+            ...issued,
+            claim: { ...issued.claim, state: "revoked" },
+            claimUrl: null,
+            nextActions: ["reissue_claim"],
+          };
+          context.warn?.({
+            code: "OWNER_CLAIM_REVOKED",
+            message: `The claim link was revoked while waiting, so it no longer works. To issue a new one, run: ${withFollowUp(
+              claimEmail === null
+                ? `${CLI_INVOCATION} claim --reissue`
+                : `${CLI_INVOCATION} claim --email ${claimEmail} --reissue`,
+            )}`,
+          });
+        } else
+          context.warn?.({
+            code: "OWNER_NOT_CONNECTED",
+            message: `Nobody accepted the claim within ${Math.round(args.connectWaitMs / 1000)} seconds. The link still works until it expires; send it to the person this inbox is for.`,
+          });
+      }
+      handoff = claimHandoff(issued, claimEmail, followUp, {
+        inboxName: state.enrollment?.name ?? args.name,
       });
       ownerClaim = {
         ...issued,
-        handoff: claimHandoff(issued, args.ownerEmail, followUp),
+        ...(connected === undefined ? {} : { connected }),
+        handoff,
       };
     } catch (error) {
       const code =
@@ -503,9 +571,17 @@ async function execute(
           : "CLAIM_NOT_ISSUED";
       context.warn?.({
         code: "OWNER_CLAIM_NOT_ISSUED",
-        message: `The inbox is ready, but the owner claim for ${args.ownerEmail} was not issued (${code}). Run: ${withFollowUp(`${CLI_INVOCATION} claim --email ${args.ownerEmail}`)}`,
+        message:
+          claimEmail === null
+            ? `The inbox is ready, but its claim link was not issued (${code}). Run: ${claimCommand}`
+            : `The inbox is ready, but the owner claim for ${claimEmail} was not issued (${code}). Run: ${claimCommand}`,
       });
-      ownerClaim = { email: args.ownerEmail, issued: false, code };
+      ownerClaim = {
+        email: claimEmail,
+        open: claimEmail === null,
+        issued: false,
+        code,
+      };
     }
   }
 
@@ -513,27 +589,44 @@ async function execute(
     workspaceId: workspace.organizationId,
     inboxId: tenantId,
     consoleUrl,
+    // The message to relay to the agent's person, at the top so an agent
+    // finds it without knowing anything about claims.
+    ...(handoff ? { handoff } : {}),
     ...(ownerClaim ? { ownerClaim } : {}),
     nextSteps: [
-      ...(ownerClaim?.claimUrl
+      ...(ownerClaim?.claimUrl && !ownerClaim.owner
+        ? [
+            {
+              action: "send_claim_link",
+              description:
+                claimEmail === null
+                  ? "Give your person this link. Whoever opens it and signs in owns the inbox; until then customer messages reach only you."
+                  : `Send this link to ${claimEmail}. They sign in with that address and own the inbox; until then customer messages reach only you.`,
+              url: ownerClaim.claimUrl as string,
+            },
+          ]
+        : []),
+      ...(ownerClaim?.claimUrl || ownerClaim?.owner
         ? []
         : [
             {
               action: "claim_workspace",
-              description: args.ownerEmail
-                ? `Give ${args.ownerEmail} owner access to this workspace. The command prints a link to send them.`
-                : "Get the work email of the person this workspace is for, then give them owner access. The command prints a link to send them.",
-              command: withFollowUp(
-                `${CLI_INVOCATION} claim --email ${args.ownerEmail ?? "you@company.com"}`,
-              ),
+              description:
+                claimEmail === null
+                  ? "Give your person owner access to this workspace. The command prints a link to send them; pass --email when you know their address."
+                  : `Give ${claimEmail} owner access to this workspace. The command prints a link to send them.`,
+              command: claimCommand,
             },
           ]),
       ...(consoleUrl
         ? [
             {
               action: "open_console",
-              description:
-                "The person you claimed it for signs in here with that email address to open the inbox.",
+              description: ownerClaim?.owner
+                ? "The owner signs in here to open the inbox."
+                : claimEmail === null
+                  ? "After claiming, your person signs in here to open the inbox."
+                  : "The person you claimed it for signs in here with that email address to open the inbox.",
               url: consoleUrl,
             },
           ]
@@ -578,6 +671,150 @@ async function execute(
     resumed,
     steps,
   };
+
+  /**
+   * The claim this run hands off: the one the state file already tracks, when
+   * it is still usable or already accepted, or a new one.
+   *
+   * A rerun is how an agent recovers lost output, so it must end with a link
+   * that works. A pending claim whose link this file kept is printed again; an
+   * accepted one is reported with its owner; an open claim whose link was
+   * never kept (a run interrupted at just the wrong moment) is replaced; and a
+   * claim the server no longer lists (expired or revoked) gives way to a new
+   * one. An addressed claim without a kept link is left as it is: its person
+   * can sign in with that address and find it waiting.
+   */
+  async function currentClaim(email: string | null): Promise<IssuedClaim> {
+    const key = email ?? OPEN_CLAIM_KEY;
+    const record = state.claims?.[key];
+    let reissue = false;
+    if (record?.id) {
+      const { items } = await request(() =>
+        client.workspaceClaims.list({ includeOpen: true }),
+      );
+      const live = items.find((claim) => claim.id === record.id);
+      if (!live || live.state === "revoked") {
+        delete state.claims![key];
+        await save();
+      } else if (live.state === "accepted") {
+        record.state = live.state;
+        record.claimUrl = null;
+        record.updatedAt = new Date().toISOString();
+        await save();
+        return {
+          claim: live,
+          claimUrl: null,
+          replayed: true,
+          emailed: false,
+          nextActions: [],
+          open: email === null,
+          ...(live.email
+            ? { owner: { email: live.email, acceptedAt: live.acceptedAt } }
+            : {}),
+        };
+      } else if (record.claimUrl) {
+        // Still pending and its link is kept: hand the same link out again.
+        // Nothing needs sending, so a completed rerun stays read-only.
+        return {
+          claim: live,
+          claimUrl: record.claimUrl,
+          replayed: true,
+          emailed: false,
+          nextActions: [],
+          open: email === null,
+        };
+      } else if (email === null) {
+        reissue = true;
+      }
+    }
+    return issueClaim(client, state, save, attempts, { email, reissue });
+  }
+
+  /**
+   * A claim that expired: forget its record (its key would only replay the
+   * dead claim) and issue a fresh one for the same address, or a fresh open
+   * link.
+   */
+  async function renewExpired(email: string | null): Promise<IssuedClaim> {
+    const key = email ?? OPEN_CLAIM_KEY;
+    if (state.claims?.[key]) {
+      delete state.claims[key];
+      await save();
+    }
+    return issueClaim(client, state, save, attempts, { email, reissue: false });
+  }
+
+  /**
+   * `--connect`: show the link, open it when a person is at this terminal,
+   * and wait for somebody to accept it. Polls the claim list every three
+   * seconds; no new server protocol is involved. Reports acceptance, a
+   * timeout (the link still works), or the link dying while we waited: it
+   * expired (the list hides expired claims) or somebody revoked it.
+   */
+  async function waitForOwner(
+    issued: IssuedClaim,
+  ): Promise<
+    | { status: "accepted"; claim: IssuedClaim }
+    | { status: "timeout" | "expired" | "revoked" }
+  > {
+    const url = issued.claimUrl!;
+    context.notify?.(
+      `Open this link and sign in to own the inbox (waiting up to ${Math.round(args.connectWaitMs / 1000)} seconds):\n  ${url}\n`,
+    );
+    if (context.interactive && context.openUrl) {
+      try {
+        await context.openUrl(url);
+      } catch {
+        /* The link is printed; a browser that will not open is not a failure. */
+      }
+    }
+    const deadline = clock.now() + args.connectWaitMs;
+    while (clock.now() < deadline) {
+      await clock.sleep(
+        Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - clock.now())),
+        signal,
+      );
+      const { items } = await request(() =>
+        client.workspaceClaims.list({ includeOpen: true }),
+      );
+      const live = items.find((claim) => claim.id === issued.claim.id);
+      if (live?.state === "accepted") {
+        const key = issued.open ? OPEN_CLAIM_KEY : live.email!;
+        const record = state.claims?.[key];
+        if (record) {
+          record.state = "accepted";
+          record.claimUrl = null;
+          record.updatedAt = new Date().toISOString();
+          await save();
+        }
+        return {
+          status: "accepted",
+          claim: {
+            ...issued,
+            claim: live,
+            claimUrl: null,
+            nextActions: [],
+            ...(live.email
+              ? { owner: { email: live.email, acceptedAt: live.acceptedAt } }
+              : {}),
+          },
+        };
+      }
+      if (!live || live.state !== "pending") {
+        const key = issued.open ? OPEN_CLAIM_KEY : issued.claim.email!;
+        const record = state.claims?.[key];
+        const status = live?.state === "revoked" ? "revoked" : "expired";
+        if (record?.id === issued.claim.id) {
+          record.state = status;
+          record.claimUrl = null;
+          record.updatedAt = new Date().toISOString();
+          await save();
+        }
+        return { status };
+      }
+    }
+    return { status: "timeout" };
+  }
 
   function activationUnavailable() {
     return new CliError(
@@ -696,11 +933,45 @@ function parseInitArguments(
     ownerEmailValue === undefined
       ? undefined
       : emailAddress(ownerEmailValue, "owner-email");
+  const noClaim = options["no-claim"] === true;
+  const connect = options.connect === true;
+  if (noClaim && (connect || ownerEmail !== undefined)) {
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "--no-claim issues no claim, so it cannot be combined with --owner-email or --connect.",
+      ["no-claim"],
+    );
+  }
+  const connectValue =
+    text(options["connect-wait-ms"]) ?? String(DEFAULT_CONNECT_WAIT_MS);
+  const connectWaitMs = Number(connectValue);
+  if (
+    !/^[1-9][0-9]*$/.test(connectValue) ||
+    !Number.isSafeInteger(connectWaitMs) ||
+    connectWaitMs < MIN_WAIT_MS ||
+    connectWaitMs > MAX_WAIT_MS
+  ) {
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "The connect wait must be 10000–900000 milliseconds.",
+      ["connect-wait-ms"],
+    );
+  }
+  if (options["connect-wait-ms"] !== undefined && !connect) {
+    throw new CliError(
+      "INVALID_ARGUMENT",
+      "--connect-wait-ms only applies with --connect.",
+      ["connect-wait-ms"],
+    );
+  }
   return {
     name,
     slug,
     locale,
     ownerEmail,
+    noClaim,
+    connect,
+    connectWaitMs,
     home: resolveHome(text(options.home), env),
     homeOption: text(options.home),
     waitMs,

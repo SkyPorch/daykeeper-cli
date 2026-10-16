@@ -9,6 +9,7 @@ pull request head is never an acceptable record.
 
 | CLI version | Management contract | Customer contract | SDK dependency              | Contract tag / commit                                                                                                                  |
 | ----------- | ------------------- | ----------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 0.5.0       | v1.12.0             | not used          | `@skyporch/daykeeper` 0.7.0 | `v1.12.0` @ `79df95836faacdc44967d1a5a0867b725a2c2546` (SkyPorch/daykeeper-openapi, 2026-10-16)                                        |
 | 0.4.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
 | 0.3.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
 | 0.2.0       | v1.3.0              | not used          | `@skyporch/daykeeper` 0.3.0 | `v1.3.0` @ `067465edfc6c94e63867a6dd0d9db02e12683877` (SkyPorch/daykeeper-openapi, 2026-09-10)                                         |
@@ -37,6 +38,12 @@ Notes:
   `init` writes pins `@skyporch/daykeeper-mcp@0.3.0` (built on the same SDK
   0.3.0 and contract `v1.3.0`) with its claim tools enabled, so 0.4.0 must be
   released only after MCP 0.3.0 is on npm.
+- CLI 0.5.0 needs `@skyporch/daykeeper@0.7.0` (contract `v1.12.0`, open
+  workspace claims) and a server with migration 0122. Its `mcp.json` pins
+  `@skyporch/daykeeper-mcp@0.5.0`. Release order: contract tag, SDK 0.7.0,
+  MCP 0.5.0, then this CLI. Against an older server an open claim is refused
+  (`INVALID_INPUT`), which `init` reports as an `OWNER_CLAIM_NOT_ISSUED`
+  warning on a live inbox; `--owner-email` keeps working.
 - `claim` and `init --owner-email` read an `emailed` boolean from the claim
   create response. It is not in contract `v1.3.0`; the platform adds it as an
   additive field (SkyPorch/daykeeper#306). When it is absent the CLI reports

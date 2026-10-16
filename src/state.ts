@@ -59,20 +59,30 @@ export interface InboxState {
 }
 
 /**
- * One issued owner claim, keyed in the state file by its lowercased address.
- * The claim token and the claim URL that carries it are deliberately absent:
- * the URL is handed to a person once, at the moment it is printed, and is
- * never written to disk.
+ * One issued owner claim, keyed in the state file by its lowercased address,
+ * or by `*` for the workspace's open claim (a link that names nobody).
+ *
+ * Since 0.5.0 a pending claim's link is kept here too, so a rerun of `init`
+ * (an agent's way to recover lost output) prints the same link instead of a
+ * dead end. This file already holds the machine credential, which can mint a
+ * new claim at any time, so the link adds no authority. It is dropped once the
+ * claim is accepted, revoked or expired.
  */
 export interface ClaimState {
   /** Null only between persisting the intent and the server answering. */
   id: string | null;
-  email: string;
+  /** Null for the open claim. */
+  email: string | null;
   idempotencyKey: string;
   expiresAt: string | null;
   state: string | null;
+  /** The pending claim's link; absent or null once it is no longer usable. */
+  claimUrl?: string | null;
   updatedAt: string;
 }
+
+/** The state-file key of the workspace's open claim. */
+export const OPEN_CLAIM_KEY = "*";
 
 export interface InitState {
   version: number;
@@ -86,7 +96,10 @@ export interface InitState {
   workspace?: WorkspaceState;
   credential?: CredentialState;
   inbox?: InboxState;
-  /** Keyed by lowercased email so one address never mints two claims. */
+  /**
+   * Keyed by lowercased email so one address never mints two claims, and by
+   * `OPEN_CLAIM_KEY` for the one open claim.
+   */
   claims?: Record<string, ClaimState>;
   updatedAt: string;
 }

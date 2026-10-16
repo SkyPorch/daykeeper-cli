@@ -71,12 +71,27 @@ interface FixtureOptions {
   ownerKey?: { x: string; y: string };
   /** Whether the server reports that it emailed an `--owner-email` claim. */
   claimEmailed?: boolean;
+  /** Claims the server already holds (a rerun passes the first run's). */
+  claims?: Record<string, any>[];
+  /**
+   * On this numbered `GET /v1/workspace-claims` (1-based), every pending
+   * claim is accepted by `acceptedBy` first, as a person in a browser would.
+   */
+  acceptOnList?: number;
+  acceptedBy?: string;
+  /**
+   * On this numbered `GET /v1/workspace-claims`, every pending claim expires
+   * (the list then hides it) or is revoked by somebody else.
+   */
+  invalidateOnList?: { list: number; as: "expired" | "revoked" };
 }
 
 interface Fixture {
   fetch: typeof globalThis.fetch;
   requests: Recorded[];
   tokens: string[];
+  /** The claims this server holds, newest last. */
+  claims: Record<string, any>[];
   sent: (method: string, path: string) => Recorded[];
 }
 
@@ -97,6 +112,12 @@ function fixture(options: FixtureOptions = {}): Fixture {
   const trafficEnabled = [...(options.trafficEnabled ?? [false, true])];
   const taken = new Set(options.takenSlugs ?? []);
   const tenants = [...(options.tenants ?? [])];
+  // Shared with the caller on purpose: a rerun fixture passes the first run's
+  // claims, as the real server would still hold them.
+  const claims = options.claims ?? [];
+  let lists = 0;
+  const publicClaim = ({ intent: _intent, ...claim }: Record<string, any>) =>
+    claim;
   const once = new Map(
     Object.entries(options.once ?? {}).map(([key, value]) => [key, [...value]]),
   );
@@ -349,28 +370,92 @@ function fixture(options: FixtureOptions = {}): Fixture {
     }
 
     if (key === "POST /v1/workspace-claims") {
+      const email = (body!.email as string | undefined) ?? null;
+      const intent = headers.get("idempotency-key");
+      const prior = claims.find(
+        (claim) => claim.intent === intent && claim.state === "pending",
+      );
+      if (prior)
+        return Response.json(
+          {
+            data: {
+              claim: publicClaim(prior),
+              token: null,
+              claimUrl: null,
+              replayed: true,
+            },
+          },
+          { status: 200 },
+        );
+      const sequence = claims.length + 1;
+      const token = `dk_invite_${String(sequence).repeat(43).slice(0, 43)}`;
+      const claim = {
+        id: `77777777-7777-4777-8777-${String(sequence).padStart(12, "7")}`,
+        organizationId: ORGANIZATION,
+        email,
+        role: "owner",
+        state: "pending",
+        expiresAt: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
+        createdAt: new Date().toISOString(),
+        acceptedAt: null,
+        revokedAt: null,
+        intent,
+      };
+      claims.push(claim);
       return Response.json(
         {
           data: {
-            claim: {
-              id: "77777777-7777-4777-8777-777777777777",
-              organizationId: ORGANIZATION,
-              email: body!.email,
-              role: "owner",
-              state: "pending",
-              expiresAt: new Date(Date.now() + 72 * 3600 * 1000).toISOString(),
-              createdAt: new Date().toISOString(),
-              acceptedAt: null,
-              revokedAt: null,
-            },
-            token: `dk_invite_${"i".repeat(43)}`,
-            claimUrl: `https://console.example.test/claim#token=dk_invite_${"i".repeat(43)}`,
+            claim: publicClaim(claim),
+            token,
+            claimUrl: `https://console.example.test/claim#token=${token}`,
             replayed: false,
-            emailed: options.claimEmailed === true,
+            emailed: email !== null && options.claimEmailed === true,
           },
         },
         { status: 201 },
       );
+    }
+
+    if (key === "GET /v1/workspace-claims") {
+      assert.equal(
+        url.search,
+        "?include=open",
+        "claims are listed with open ones",
+      );
+      lists += 1;
+      if (options.acceptOnList !== undefined && lists >= options.acceptOnList)
+        for (const claim of claims)
+          if (claim.state === "pending") {
+            claim.state = "accepted";
+            claim.email ??= options.acceptedBy ?? "sam@acme.example";
+            claim.acceptedAt = new Date().toISOString();
+          }
+      if (options.invalidateOnList && lists >= options.invalidateOnList.list)
+        for (const claim of claims)
+          if (claim.state === "pending") {
+            claim.state = options.invalidateOnList.as;
+            if (claim.state === "revoked")
+              claim.revokedAt = new Date().toISOString();
+          }
+      return Response.json({
+        data: {
+          items: [...claims]
+            .reverse()
+            .filter((claim) => claim.state !== "expired")
+            .map(publicClaim),
+        },
+      });
+    }
+
+    const revoke = /^\/v1\/workspace-claims\/([^/]+)\/revoke$/.exec(
+      url.pathname,
+    );
+    if (method === "POST" && revoke) {
+      const claim = claims.find((item) => item.id === revoke[1]);
+      if (!claim) return apiError(404, "RESOURCE_NOT_FOUND");
+      claim.state = "revoked";
+      claim.revokedAt = new Date().toISOString();
+      return Response.json({ data: publicClaim(claim) });
     }
 
     return apiError(404, "RESOURCE_NOT_FOUND");
@@ -380,6 +465,7 @@ function fixture(options: FixtureOptions = {}): Fixture {
     fetch: handler,
     requests,
     tokens,
+    claims,
     sent: (method, path) =>
       requests.filter(
         (request) => request.method === method && request.path === path,
@@ -485,7 +571,7 @@ test("a fresh run enrolls, provisions, activates, and writes configuration", asy
   assert.equal(data.credential.id, CREDENTIAL);
   assert.equal(data.credential.storedAt, join(directory, "credentials.json"));
   assert.deepEqual(data.endpoints, { apiUrl: ORIGIN, gatewayUrl: ORIGIN });
-  assert.equal(data.sdk.packages.backend, "@skyporch/daykeeper@0.3.0");
+  assert.equal(data.sdk.packages.backend, "@skyporch/daykeeper@0.7.0");
   assert.equal(data.mcp.configPath, join(directory, "mcp.json"));
   assert.equal(
     data.mcp.mcpServers.daykeeper.env.DAYKEEPER_API_KEY,
@@ -525,7 +611,7 @@ test("a fresh run enrolls, provisions, activates, and writes configuration", asy
   assert.equal(mcp.mcpServers.daykeeper.env.DAYKEEPER_API_KEY, token);
   assert.deepEqual(mcp.mcpServers.daykeeper.args, [
     "--yes",
-    "@skyporch/daykeeper-mcp@0.3.0",
+    "@skyporch/daykeeper-mcp@0.5.0",
   ]);
   // MCP 0.3.0 hides the workspace claim tools unless this flag is on; with it
   // (and mutations, already on) the agent can create claim links itself.
@@ -565,8 +651,9 @@ test("the token and the owner key never reach output without --reveal-key", asyn
 
 test("a rerun resumes, reports resumed, and sends no mutation", async () => {
   const directory = await home();
-  await init({ home: directory, fixture: fixture() });
-  const server = fixture({ trafficEnabled: [true] });
+  const first = fixture();
+  const created = await init({ home: directory, fixture: first });
+  const server = fixture({ trafficEnabled: [true], claims: first.claims });
   const result = await init({ home: directory, fixture: server });
   assert.equal(result.exitCode, 0, result.output);
   assert.equal(result.envelope.data.resumed, true);
@@ -580,6 +667,15 @@ test("a rerun resumes, reports resumed, and sends no mutation", async () => {
     "A completed workspace is never mutated again",
   );
   assert.equal(result.envelope.data.inbox.tenantId, TENANT);
+  // The claim link the first run printed is printed again, unchanged.
+  assert.equal(
+    result.envelope.data.handoff.message,
+    created.envelope.data.handoff.message,
+  );
+  assert.equal(
+    result.envelope.data.ownerClaim.claimUrl,
+    created.envelope.data.ownerClaim.claimUrl,
+  );
 });
 
 test("a crash after enrollment resumes without a second enrollment", async () => {
@@ -1445,14 +1541,13 @@ test("init names the workspace, the inbox, and what to do next", async () => {
   // A self-hosted origin has no known console, and every follow-up command
   // must repeat the origin and home it needs to find the stored credential.
   assert.equal(data.consoleUrl, null);
+  // Every run ends with a claim link for the agent's person.
   assert.deepEqual(
     data.nextSteps.map((step: { action: string }) => step.action),
-    ["claim_workspace", "run_commands"],
+    ["send_claim_link", "run_commands"],
   );
-  assert.equal(
-    data.nextSteps[0].command,
-    `npx @skyporch/daykeeper-cli claim --email you@company.com --origin ${ORIGIN} --home ${JSON.stringify(directory)}`,
-  );
+  assert.equal(data.nextSteps[0].url, data.ownerClaim.claimUrl);
+  assert.deepEqual(data.handoff, data.ownerClaim.handoff);
 
   const hostedHome = await home();
   const hosted = await run(
@@ -1464,15 +1559,15 @@ test("init names the workspace, the inbox, and what to do next", async () => {
   assert.equal(hostedData.consoleUrl, "https://app.mydaykeeper.com");
   assert.deepEqual(hostedData.nextSteps, [
     {
-      action: "claim_workspace",
+      action: "send_claim_link",
       description:
-        "Get the work email of the person this workspace is for, then give them owner access. The command prints a link to send them.",
-      command: "npx @skyporch/daykeeper-cli claim --email you@company.com",
+        "Give your person this link. Whoever opens it and signs in owns the inbox; until then customer messages reach only you.",
+      url: hostedData.ownerClaim.claimUrl,
     },
     {
       action: "open_console",
       description:
-        "The person you claimed it for signs in here with that email address to open the inbox.",
+        "After claiming, your person signs in here to open the inbox.",
       url: "https://app.mydaykeeper.com",
     },
     {
@@ -1497,7 +1592,12 @@ test("init prints readable text for a person at a terminal, never the credential
   assert.match(text.output, /^Your Daykeeper inbox is ready\.\n/);
   assert(text.output.includes(ORGANIZATION));
   assert(text.output.includes(TENANT));
-  assert(text.output.includes("claim --email you@company.com"));
+  // The handoff comes right after the headline, before the details.
+  assert.match(
+    text.output,
+    /^Your Daykeeper inbox is ready\.\n\nOwner claim\n  https:\/\/console\.example\.test\/claim#token=dk_invite_/,
+  );
+  assert.match(text.output, /customer messages reach only your AI agent/);
   assert(!text.output.includes(server.tokens[0]!));
   assert.throws(() => JSON.parse(text.output));
 
@@ -1849,7 +1949,12 @@ test("init --owner-email hands the live inbox to its person in the same run", as
   );
   const state = await readStateFile(directory);
   assert.equal(state.claims["sam@acme.example"].state, "pending");
-  assert(!JSON.stringify(state).includes("dk_invite_"));
+  // The link is kept so a rerun can print it again; no open claim is issued.
+  assert.equal(
+    state.claims["sam@acme.example"].claimUrl,
+    data.ownerClaim.claimUrl,
+  );
+  assert.equal(state.claims["*"], undefined);
 
   // At a terminal the link and the handoff are printed under "Owner claim".
   const again = await home();
@@ -1964,4 +2069,263 @@ test("a refusal a rerun cannot fix does not tell a person to rerun", async () =>
   assert.equal(insecure.exitCode, 1);
   assert.match(insecure.output, /Code: STATE_INSECURE/);
   assert.doesNotMatch(insecure.output, /Run the same command again/);
+});
+
+test("init ends with an open claim link unless --no-claim, which issues nothing", async () => {
+  const server = fixture();
+  const result = await init({ home: await home(), fixture: server });
+  assert.equal(result.exitCode, 0, result.output);
+  assert.deepEqual(server.sent("POST", "/v1/workspace-claims")[0]!.body, {});
+  const data = result.envelope.data;
+  assert.equal(data.ownerClaim.open, true);
+  assert.equal(data.ownerClaim.claim.email, null);
+  assert.match(
+    data.handoff.message,
+    /^Your Daykeeper inbox "Acme Support" is live\./,
+  );
+  assert.match(data.handoff.message, /whoever opens it first/);
+
+  const quiet = fixture();
+  const none = await init({
+    home: await home(),
+    fixture: quiet,
+    args: ["--no-claim"],
+  });
+  assert.equal(none.exitCode, 0, none.output);
+  assert.equal(quiet.sent("POST", "/v1/workspace-claims").length, 0);
+  assert.equal(none.envelope.data.handoff, undefined);
+  assert.equal(none.envelope.data.ownerClaim, undefined);
+  assert.equal(none.envelope.data.nextSteps[0].action, "claim_workspace");
+  assert.match(none.envelope.data.nextSteps[0].command, /claim --origin /);
+
+  for (const args of [
+    ["--no-claim", "--connect"],
+    ["--no-claim", "--owner-email", "sam@acme.example"],
+    ["--connect-wait-ms", "20000"],
+    ["--connect", "--connect-wait-ms", "5"],
+  ]) {
+    const refused = await init({
+      home: await home(),
+      fixture: fixture(),
+      args,
+    });
+    assert.equal(refused.exitCode, 1, args.join(" "));
+    assert.equal(refused.envelope.error.code, "INVALID_ARGUMENT");
+  }
+});
+
+test("a rerun reports who claimed the inbox, or replaces a link that expired", async () => {
+  const directory = await home();
+  const first = fixture();
+  const created = await init({ home: directory, fixture: first });
+  const link = created.envelope.data.ownerClaim.claimUrl;
+
+  // Somebody accepted it: the rerun names them and sends nothing.
+  const accepted = fixture({
+    trafficEnabled: [true],
+    claims: first.claims,
+    acceptOnList: 1,
+    acceptedBy: "sam@acme.example",
+  });
+  const owned = await init({ home: directory, fixture: accepted });
+  assert.equal(owned.exitCode, 0, owned.output);
+  assert.equal(accepted.sent("POST", "/v1/workspace-claims").length, 0);
+  assert.deepEqual(
+    owned.envelope.data.ownerClaim.owner.email,
+    "sam@acme.example",
+  );
+  assert.equal(owned.envelope.data.ownerClaim.claimUrl, null);
+  assert.match(
+    owned.envelope.data.handoff.message,
+    /^sam@acme\.example claimed this inbox/,
+  );
+  assert.equal(
+    owned.envelope.data.nextSteps.some(
+      (step: { action: string }) =>
+        step.action === "send_claim_link" || step.action === "claim_workspace",
+    ),
+    false,
+  );
+  const state = await readStateFile(directory);
+  assert.equal(state.claims["*"].state, "accepted");
+  assert.equal(state.claims["*"].claimUrl, null);
+
+  // A link the server no longer lists (it expired) is replaced by a new one.
+  const other = await home();
+  const original = fixture();
+  await init({ home: other, fixture: original });
+  const expired = fixture({ trafficEnabled: [true] });
+  const renewed = await init({ home: other, fixture: expired });
+  assert.equal(renewed.exitCode, 0, renewed.output);
+  assert.equal(expired.sent("POST", "/v1/workspace-claims").length, 1);
+  assert.match(renewed.envelope.data.ownerClaim.claimUrl, /#token=dk_invite_/);
+});
+
+test("--connect shows the link, opens it at a terminal and waits for its owner", async () => {
+  const directory = await home();
+  const server = fixture({ acceptOnList: 2, acceptedBy: "sam@acme.example" });
+  const opened: string[] = [];
+  const notes: string[] = [];
+  const result = await run(
+    [
+      "init",
+      "--name",
+      "Acme Support",
+      "--origin",
+      ORIGIN,
+      "--home",
+      directory,
+      "--connect",
+      "--json",
+    ],
+    server,
+    {},
+    {
+      interactive: true,
+      openUrl: (url) => {
+        opened.push(url);
+      },
+      notify: (text) => notes.push(text),
+    },
+  );
+  assert.equal(result.exitCode, 0, result.output);
+  const data = JSON.parse(result.output).data;
+  assert.equal(data.ownerClaim.connected, true);
+  assert.equal(data.ownerClaim.owner.email, "sam@acme.example");
+  assert.equal(opened.length, 1);
+  assert.match(opened[0]!, /^https:\/\/console\.example\.test\/claim#token=/);
+  // The link reaches the person while init waits, off the JSON on stdout.
+  assert.equal(notes.length, 1);
+  assert(notes[0]!.includes(opened[0]!));
+  assert.match(data.handoff.message, /sam@acme\.example claimed this inbox/);
+
+  // Nobody accepts in time: still a successful run, with a note, and the
+  // link stays the handoff. Without a terminal nothing is opened.
+  const waiting = fixture();
+  const slow: string[] = [];
+  const timedOut = await run(
+    [
+      "init",
+      "--name",
+      "Acme Support",
+      "--origin",
+      ORIGIN,
+      "--home",
+      await home(),
+      "--connect",
+      "--connect-wait-ms",
+      "10000",
+    ],
+    waiting,
+    {},
+    { openUrl: (url) => void slow.push(url) },
+  );
+  assert.equal(timedOut.exitCode, 0, timedOut.output);
+  const envelope = JSON.parse(timedOut.output);
+  assert.equal(envelope.data.ownerClaim.connected, false);
+  assert.match(envelope.data.ownerClaim.claimUrl, /#token=dk_invite_/);
+  assert(
+    envelope.warnings.some(
+      (warning: { code: string }) => warning.code === "OWNER_NOT_CONNECTED",
+    ),
+  );
+  assert.equal(slow.length, 0);
+  // About one list every three seconds across the ten-second wait.
+  assert(waiting.sent("GET", "/v1/workspace-claims").length <= 5);
+});
+
+test("--connect replaces a link that expires while waiting, never one revoked", async () => {
+  const connect = (directory: string) => [
+    "init",
+    "--name",
+    "Acme Support",
+    "--origin",
+    ORIGIN,
+    "--home",
+    directory,
+    "--connect",
+    "--connect-wait-ms",
+    "10000",
+  ];
+  const isWarning = (envelope: any, code: string) =>
+    envelope.warnings.some(
+      (warning: { code: string }) => warning.code === code,
+    );
+
+  // Expired (a resumed claim near its end): a new link is the handoff.
+  const expiring = fixture({ invalidateOnList: { list: 1, as: "expired" } });
+  const expiredHome = await home();
+  const renewed = await run(connect(expiredHome), expiring, {}, {});
+  assert.equal(renewed.exitCode, 0, renewed.output);
+  const renewedEnvelope = JSON.parse(renewed.output);
+  const issued = expiring.sent("POST", "/v1/workspace-claims");
+  assert.equal(issued.length, 2);
+  assert.equal(renewedEnvelope.data.ownerClaim.connected, false);
+  assert.equal(
+    renewedEnvelope.data.ownerClaim.claim.id,
+    expiring.claims[1]!.id,
+  );
+  assert.match(renewedEnvelope.data.ownerClaim.claimUrl, /#token=dk_invite_2/);
+  assert(isWarning(renewedEnvelope, "OWNER_CLAIM_RENEWED"));
+  assert(!isWarning(renewedEnvelope, "OWNER_NOT_CONNECTED"));
+  const kept = await readStateFile(expiredHome);
+  assert.equal(kept.claims["*"].id, expiring.claims[1]!.id);
+  assert.equal(
+    kept.claims["*"].claimUrl,
+    renewedEnvelope.data.ownerClaim.claimUrl,
+  );
+
+  // Revoked by somebody: no new link behind their back, and not the dead one.
+  const revoking = fixture({ invalidateOnList: { list: 1, as: "revoked" } });
+  const revokedHome = await home();
+  const withdrawn = await run(connect(revokedHome), revoking, {}, {});
+  assert.equal(withdrawn.exitCode, 0, withdrawn.output);
+  const withdrawnEnvelope = JSON.parse(withdrawn.output);
+  assert.equal(revoking.sent("POST", "/v1/workspace-claims").length, 1);
+  assert.equal(withdrawnEnvelope.data.ownerClaim.claimUrl, null);
+  assert.deepEqual(withdrawnEnvelope.data.ownerClaim.nextActions, [
+    "reissue_claim",
+  ]);
+  assert(isWarning(withdrawnEnvelope, "OWNER_CLAIM_REVOKED"));
+  assert.match(
+    withdrawnEnvelope.data.handoff.message,
+    /claim link was revoked, so it no longer works\. To issue a new one, run: .*claim --reissue/,
+  );
+  assert(!withdrawn.output.includes("dk_invite_1"));
+  const dead = await readStateFile(revokedHome);
+  assert.equal(dead.claims["*"].state, "revoked");
+  assert.equal(dead.claims["*"].claimUrl, null);
+});
+
+test("an open claim the server issued but this file never saved is replaced in the same run", async () => {
+  const directory = await home();
+  const first = fixture();
+  await init({ home: directory, fixture: first });
+  // The first run stopped after the server issued the link and before its
+  // answer was saved: only the intent (the idempotency key) is on disk.
+  const saved = await readStateFile(directory);
+  saved.claims["*"] = {
+    ...saved.claims["*"],
+    id: null,
+    state: null,
+    expiresAt: null,
+    claimUrl: null,
+  };
+  await writeFile(
+    join(directory, "credentials.json"),
+    JSON.stringify(saved, null, 2),
+    { mode: 0o600 },
+  );
+
+  const resumed = fixture({ trafficEnabled: [true], claims: first.claims });
+  const result = await init({ home: directory, fixture: resumed });
+  assert.equal(result.exitCode, 0, result.output);
+  // The replay found the unreachable claim; it was revoked and replaced.
+  assert.equal(resumed.sent("POST", "/v1/workspace-claims").length, 2);
+  assert.equal(first.claims[0]!.state, "revoked");
+  const link = result.envelope.data.ownerClaim.claimUrl;
+  assert.match(link, /#token=dk_invite_2/);
+  const state = await readStateFile(directory);
+  assert.equal(state.claims["*"].claimUrl, link);
+  assert.equal(state.claims["*"].id, first.claims[1]!.id);
 });

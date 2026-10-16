@@ -217,7 +217,7 @@ Success envelope, `data` shape:
     "mcpServers": {
       "daykeeper": {
         "command": "npx",
-        "args": ["--yes", "@skyporch/daykeeper-mcp@0.3.0"],
+        "args": ["--yes", "@skyporch/daykeeper-mcp@0.5.0"],
         "env": {
           "DAYKEEPER_API_URL": "https://…",
           "DAYKEEPER_API_KEY": "<stored; see configPath>",
@@ -271,7 +271,7 @@ and the step reached in `fields`.
   `inboxActivations`, `tenants.getProvisioningOperation`, `customerSessions`,
   and `entitlements`; 0.3.0 adds `workspaceClaims`. Record it in
   `COMPATIBILITY.md`.
-- The MCP block pins the published `@skyporch/daykeeper-mcp@0.3.0` and sets
+- The MCP block pins the published `@skyporch/daykeeper-mcp@0.5.0` and sets
   `DAYKEEPER_MCP_ENABLE_CLAIM_TOOLS=true`, so an agent using `mcp.json` can
   create, list and revoke workspace claim links. Those tools work only under
   the machine credential `init` stored, which is the key `mcp.json` carries.
@@ -312,3 +312,15 @@ specified separately: see `daykeeper claim` in `COMMANDS.md` and
 reads the state file described above, reuses this command's origin pinning and
 credential rotation, and adds a `claims` map to the same file — recording each
 claim's id, address, expiry, and idempotency key, and never its token or URL.
+
+## The handoff (0.5.0)
+
+Every run now ends with a claim, specified in
+`docs/operations/workspace-claim-v2.md` in the platform repository: an open
+claim link by default, an addressed claim with `--owner-email`, nothing with
+`--no-claim`. `data.handoff.message` leads the output and says what happens
+until somebody claims the inbox. A pending claim's link is kept in the state
+file, so a rerun prints it again without sending anything, reports the owner
+once it is accepted, or replaces a link the server no longer lists. `--connect`
+waits for a person to accept the link by polling the claim list every three
+seconds, within `--connect-wait-ms`.

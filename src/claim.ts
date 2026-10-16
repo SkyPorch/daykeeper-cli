@@ -4,7 +4,12 @@ import { CLI_INVOCATION, HOSTED_ORIGIN } from "./constants.ts";
 import { CliError } from "./errors.ts";
 import { resolveOrigins, type Origins } from "./origins.ts";
 import { emailAddress } from "./schemas.ts";
-import { resolveHome, type ClaimState, type InitState } from "./state.ts";
+import {
+  OPEN_CLAIM_KEY,
+  resolveHome,
+  type ClaimState,
+  type InitState,
+} from "./state.ts";
 import { initRequired, openStoredCredential } from "./stored.ts";
 
 /**
@@ -26,7 +31,8 @@ export interface ClaimContext {
 }
 
 interface ClaimArguments extends Origins {
-  email: string;
+  /** Null issues the workspace's open claim. */
+  email: string | null;
   home: string;
   /** The `--home` the caller passed, repeated in printed follow-up commands. */
   homeOption: string | undefined;
@@ -97,7 +103,9 @@ async function create(
   });
   return {
     ...issued,
-    handoff: claimHandoff(issued, args.email, followUpFlags(args)),
+    handoff: claimHandoff(issued, args.email, followUpFlags(args), {
+      inboxName: state.enrollment?.name,
+    }),
     credentialRotated: rotated,
   };
 }
@@ -106,7 +114,8 @@ async function create(
 export interface IssuedClaim {
   claim: {
     id: string;
-    email: string;
+    /** Null for an open claim nobody has accepted yet. */
+    email: string | null;
     state: string;
     expiresAt: string;
     [key: string]: unknown;
@@ -117,22 +126,28 @@ export interface IssuedClaim {
   emailed: boolean;
   nextActions: string[];
   revokedClaimId?: string;
+  /** True for an open claim: a link that names nobody. */
+  open: boolean;
+  /** Who owns the workspace through this claim, once it is accepted. */
+  owner?: { email: string; acceptedAt: string | null };
 }
 
 /**
- * Issue, replay, or reissue the owner claim for one address, under the stored
- * credential. Shared by `claim` and by `init --owner-email`.
+ * Issue, replay, or reissue the owner claim for one address (or, with a null
+ * address, the workspace's open claim), under the stored credential. Shared by
+ * `claim` and by `init`.
  */
 export async function issueClaim(
   client: DaykeeperClient,
   state: InitState,
   save: () => Promise<void>,
   attempts: Retries,
-  input: { email: string; reissue: boolean },
+  input: { email: string | null; reissue: boolean },
 ): Promise<IssuedClaim> {
   state.claims ??= {};
   const claims = state.claims;
-  let record: ClaimState | undefined = claims[input.email];
+  const key = input.email ?? OPEN_CLAIM_KEY;
+  let record: ClaimState | undefined = claims[key];
 
   // Reissuing revokes the pending claim first, so the address never holds two,
   // and always retires the stored key: replaying it would return the claim the
@@ -149,29 +164,23 @@ export async function issueClaim(
   const idempotencyKey = record?.idempotencyKey ?? generateIdempotencyKey();
   // The intent is persisted before the mutation is sent, so an interrupted run
   // replays this key rather than issuing a second claim for the same address.
-  claims[input.email] = {
+  claims[key] = {
     id: record?.id ?? null,
     email: input.email,
     idempotencyKey,
     expiresAt: record?.expiresAt ?? null,
     state: record?.state ?? null,
+    claimUrl: record?.claimUrl ?? null,
     updatedAt: new Date().toISOString(),
   };
   await save();
 
   const result = await attempts.request(() =>
-    client.workspaceClaims.create({ email: input.email }, { idempotencyKey }),
+    client.workspaceClaims.create(
+      input.email === null ? {} : { email: input.email },
+      { idempotencyKey },
+    ),
   );
-  claims[input.email] = {
-    id: result.claim.id,
-    email: input.email,
-    idempotencyKey,
-    expiresAt: result.claim.expiresAt,
-    state: result.claim.state,
-    updatedAt: new Date().toISOString(),
-  };
-  await save();
-
   // `claimUrl` carries the invitation token in its fragment and is printed
   // unredacted on purpose: it is the handoff, and the whole point of the
   // command is to give a person that one link. The token inside it is
@@ -179,57 +188,130 @@ export async function issueClaim(
   // `result.token` itself is dropped: the URL already delivers it, and a bare
   // token in the envelope would invite storing it.
   //
+  // A replay carries no link. When it replays the very claim whose link this
+  // file kept, that link is still the live one, so it is handed out again.
+  const pending = result.claim.state === "pending";
+  const claimUrl =
+    result.claimUrl ??
+    (pending && record?.id === result.claim.id
+      ? (record?.claimUrl ?? null)
+      : null);
+  claims[key] = {
+    id: result.claim.id,
+    email: input.email,
+    idempotencyKey,
+    expiresAt: result.claim.expiresAt,
+    state: result.claim.state,
+    claimUrl: pending ? claimUrl : null,
+    updatedAt: new Date().toISOString(),
+  };
+  await save();
+
+  // An open claim's link exists only in the response that created it. When a
+  // replay finds the claim pending but this file never kept its link (the
+  // first run stopped after the server issued it and before it was saved),
+  // nobody can ever open it: replace it now, in this run, rather than end
+  // with no way for a person to own the inbox. An addressed claim is left
+  // alone; its person may have the link by email.
+  if (input.email === null && pending && claimUrl === null && !input.reissue)
+    return issueClaim(client, state, save, attempts, {
+      email: null,
+      reissue: true,
+    });
+
   // `emailed` is additive in the platform's response (servers that do not
   // send claim emails omit it), so anything but `true` reads as not emailed.
   const emailed = (result as unknown as { emailed?: unknown }).emailed === true;
   return {
     claim: result.claim,
-    claimUrl: result.claimUrl,
+    claimUrl,
     replayed: result.replayed,
     emailed,
-    nextActions: result.claimUrl === null ? ["reissue_claim"] : [],
+    nextActions: claimUrl === null && pending ? ["reissue_claim"] : [],
     ...(revoked ? { revokedClaimId: revoked } : {}),
+    open: input.email === null,
+    ...(result.claim.state === "accepted" && result.claim.email
+      ? {
+          owner: {
+            email: result.claim.email,
+            acceptedAt: result.claim.acceptedAt,
+          },
+        }
+      : {}),
   };
 }
 
 /**
- * The plain-language handoff: who the link is for, how long it lasts, and the
- * exact command that replaces it. Both `claim` and `init --owner-email` put it
- * in the envelope, so an agent can relay it word for word.
+ * The plain-language handoff: who the link is for, how long it lasts, what
+ * happens until somebody claims the inbox, and the exact command that
+ * replaces the link. `claim` and `init` both put it in the envelope, so an
+ * agent can relay `message` word for word.
  */
 export function claimHandoff(
   issued: IssuedClaim,
-  email: string,
+  email: string | null,
   followUp: string,
+  options: { inboxName?: string } = {},
 ): {
-  sendTo: string;
+  sendTo: string | null;
   expiresAt: string;
   reissueCommand: string;
   message: string;
 } {
   const reissueCommand = [
-    `${CLI_INVOCATION} claim --email ${email} --reissue`,
+    email === null
+      ? `${CLI_INVOCATION} claim --reissue`
+      : `${CLI_INVOCATION} claim --email ${email} --reissue`,
     followUp,
   ]
     .filter(Boolean)
     .join(" ");
   const expiry = describeExpiry(issued.claim.expiresAt);
-  const message = issued.claimUrl
-    ? [
-        issued.emailed
-          ? `Daykeeper emailed this link to ${email}. You can also send it yourself.`
-          : `Send this link to ${email}.`,
-        `It works once, only for someone signed in as ${email}, and expires ${expiry}.`,
-        `They sign in to Daykeeper with that address and become an owner of this workspace; the agent credential keeps working.`,
-        `If the link is lost or expires, run: ${reissueCommand}`,
-      ].join(" ")
-    : [
-        `A claim for ${email} is already waiting and expires ${expiry}.`,
-        `Its link is only shown when it is issued.`,
-        `To print a new link, run: ${reissueCommand}`,
-      ].join(" ");
+  const inbox = options.inboxName
+    ? `Your Daykeeper inbox "${options.inboxName}"`
+    : "Your Daykeeper inbox";
+  // The real reason to claim: until a person owns the inbox, nobody but the
+  // agent sees customer messages, and nobody is emailed about them.
+  const consequence = `${inbox} is live. Until someone claims it, customer messages reach only your AI agent and nobody is emailed about them.`;
+  let message: string;
+  if (issued.owner) {
+    message = `${issued.owner.email} claimed this inbox and owns it now. They sign in to Daykeeper with that address to read its conversations; the agent credential keeps working.`;
+  } else if (issued.claimUrl && email === null) {
+    message = [
+      consequence,
+      `To own it, open this link and sign in: ${issued.claimUrl}`,
+      `The link works once, for whoever opens it first, and expires ${expiry}.`,
+      `If it is lost or expires, run: ${reissueCommand}`,
+    ].join(" ");
+  } else if (issued.claimUrl) {
+    message = [
+      consequence,
+      issued.emailed
+        ? `Daykeeper emailed this link to ${email}. You can also send it yourself.`
+        : `Send this link to ${email}.`,
+      `It works once, only for someone signed in as ${email}, and expires ${expiry}.`,
+      `They sign in to Daykeeper with that address and become an owner of this workspace; the agent credential keeps working.`,
+      `If the link is lost or expires, run: ${reissueCommand}`,
+    ].join(" ");
+  } else if (issued.claim.state === "revoked") {
+    message = [
+      consequence,
+      email === null
+        ? `Its claim link was revoked, so it no longer works.`
+        : `The claim for ${email} was revoked, so its link no longer works.`,
+      `To issue a new one, run: ${reissueCommand}`,
+    ].join(" ");
+  } else {
+    message = [
+      email === null
+        ? `An open claim link for this inbox is already waiting and expires ${expiry}.`
+        : `A claim for ${email} is already waiting and expires ${expiry}.`,
+      `Its link is only shown when it is issued.`,
+      `To print a new link, run: ${reissueCommand}`,
+    ].join(" ");
+  }
   return {
-    sendTo: email,
+    sendTo: issued.owner ? issued.owner.email : email,
     expiresAt: issued.claim.expiresAt,
     reissueCommand,
     message,
@@ -274,7 +356,9 @@ async function status(
   attempts: Retries,
   rotated: boolean,
 ): Promise<Record<string, unknown>> {
-  const { items } = await attempts.request(() => client.workspaceClaims.list());
+  const { items } = await attempts.request(() =>
+    client.workspaceClaims.list({ includeOpen: true }),
+  );
   const byId = new Map(items.map((claim) => [claim.id, claim]));
   const claims = state.claims ?? {};
   let updated = 0;
@@ -295,6 +379,8 @@ async function status(
     if (live.state !== record.state || live.expiresAt !== record.expiresAt) {
       record.state = live.state;
       record.expiresAt = live.expiresAt;
+      // A link is kept only while its claim can still be accepted.
+      if (live.state !== "pending") record.claimUrl = null;
       record.updatedAt = new Date().toISOString();
       updated += 1;
     }
@@ -318,7 +404,12 @@ function parseClaimArguments(
   const text = (value: string | boolean | undefined) =>
     typeof value === "string" && value !== "" ? value : undefined;
   return {
-    email: subcommand === "status" ? "" : emailAddress(text(options.email)),
+    // No --email issues (or with --reissue, replaces) the open claim.
+    // An --email given empty is a mistake, not a request for an open link.
+    email:
+      subcommand === "status" || options.email === undefined
+        ? null
+        : emailAddress(text(options.email)),
     home: resolveHome(text(options.home), env),
     homeOption: text(options.home),
     reissue: options.reissue === true,
