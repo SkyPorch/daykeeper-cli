@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 - 2026-10-16
+## 0.5.0 - 2026-10-17
 
 Runtime SDK: `@skyporch/daykeeper@0.7.0`; management contract tag `v1.12.0`
 (`79df958`).
